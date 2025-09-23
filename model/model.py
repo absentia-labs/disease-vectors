@@ -58,7 +58,13 @@ class PositionlessEmbeddings(nn.Module):
         embeddings = self.dropout(embeddings)
         return embeddings
         
-
+class  MultiPhenotypePredictionHead(nn.Module):
+    def __init__(self, ):
+        super().__init__()
+        ...
+    def forward(self, x, loss_fct):
+        
+        return x
 
 class Polygene(transformers.DistilBertPreTrainedModel):
     """
@@ -83,15 +89,15 @@ class Polygene(transformers.DistilBertPreTrainedModel):
         self._use_flash_attention_2 = config._attn_implementation == "flash_attention_2"
 
         self.prediction_head = nn.Sequential(
-            nn.Linear(config.dim, config.dim),
-            get_activation(config.activation),
-            nn.LayerNorm(config.dim, eps=1e-12),
+            #nn.Linear(config.dim, config.dim),
+            #get_activation(config.activation),
+            #nn.LayerNorm(config.dim, eps=1e-12),
             nn.Linear(config.dim, config.vocab_size),
         )
 
         # Initialize weights and apply final processing
         self.post_init()
-        self.mlm_loss_fct = nn.CrossEntropyLoss(label_smoothing=0.5)
+        self.mlm_loss_fct = nn.CrossEntropyLoss(label_smoothing=0.25)
 
     def forward(
         self,

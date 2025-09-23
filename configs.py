@@ -22,6 +22,8 @@ class BaseConfig:
     num_top_genes: int
     custom_mapping:str
     sparse:bool
+    classification_token:bool
+    seed:int
 
     vocab_path: str
     obs_included_phenotypes: list[str]
@@ -97,7 +99,6 @@ def parse_args(args: list[str] = None) -> BaseConfig:
     parser.add_argument("--eval_data_paths", nargs="+", type=str, help="One or more (possibly `braceexpand`-able) paths to validation h5ad file(s).")
     parser.add_argument("--max_length", type=int, required=True, help="The maximum sequence length for the transformer.")
     parser.add_argument("--num_top_genes", type=int, required=False, default=int(6e5), help="The number of highest variable genes to use.")
-    parser.add_argument("--sparse", action="store_true", help="drop 0 expression genes or always have top max length highly variable genes in order")
 
     parser.add_argument("--vocab_path", type=str, required=True, help="Path to the JSON file mapping token_types to tokens.")
     parser.add_argument("--custom_mapping", type=str, default="ok.json", help="Path to the JSON with custom mappings to reduce vocabulary size")
@@ -109,6 +110,11 @@ def parse_args(args: list[str] = None) -> BaseConfig:
     parser.add_argument("--output_dir", type=str, required=True)
     parser.add_argument("--per_device_eval_batch_size", type=int, required=True)
     parser.add_argument("--dataloader_num_workers", default=4, type=int)
+
+    # Classifcation Modifications
+    parser.add_argument("--classification_token", type=bool, action='store_true', help="Self Supervised Classification on a CLS Token: unified genome-phenome manifold")
+    parser.add_argument("--sparse", action="store_true", help="drop 0 expression genes or always have top max length highly variable genes in order")
+    parser.add_argument("--seed", type=int, help="seed to set all random generators to", default=42)
 
     mlm_subparser.add_argument("--train_data_paths", nargs="+", type=str, help="One or more (possible `braceexpand`-able) paths to training h5ad file(s).")
     mlm_subparser.add_argument("--num_train_epochs", type=int, required=True)
@@ -124,7 +130,6 @@ def parse_args(args: list[str] = None) -> BaseConfig:
 
     mlm_subparser.add_argument("--gene_mask_prob", type=float, required=True, help="The probability a gene token will be masked.")
     mlm_subparser.add_argument("--phenotype_mask_prob", type=float, required=True, help="The probability a phenotype token will be masked.")
-    mlm_subparser.add_argument("--classification_token", type=bool, action='store_true', help="Self Supervised Classification on a CLS Token: unified genome-phenome manifold")
 
     args = parser.parse_args(args)
     if args.subcommand is None:

@@ -1099,5 +1099,18 @@
     "[CEL-seq2]",
     "[BD_Rhapsody_Targeted_mRNA]",
     "[sci-RNA-seq]"
+  ],
+  "tissue_general": [
+    "blood", "brain", "small intestine", "liver", "nose", "lung",
+       "lymph node", "heart", "bone marrow", "fallopian tube", "mucosa",
+       "kidney", "placenta", "reproductive system", "spleen", "embryo",
+       "skin of body", "pleural fluid", "breast", "colon", "eye",
+       "adrenal gland", "pancreas", "stomach", "adipose tissue",
+       "respiratory system", "spinal cord", "endocrine gland",
+       "musculature", "exocrine gland", "prostate gland", "tongue",
+       "esophagus", "omentum", "vasculature", "esophagogastric junction",
+       "uterus", "intestine", "bladder organ", "large intestine",
+       "axilla", "skeletal system", "yolk sac", "central nervous system",
+       "lamina propria", "ovary", "immune system", "saliva"
   ]
 }

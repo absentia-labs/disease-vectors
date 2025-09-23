@@ -60,8 +60,10 @@ class GeneTokenizer:
         
         # Tag to be manually changed for models to grow with unseen vocabulary
         self.flexible = False # During training do you want to be able to grow vocabularies and add new phenotypes
-        self.neural_updates = {"token_values":[], "token_types": [],
-                               "token_value_str":[], "token_type_of_values":[]}
+        self.neural_updates = {
+                        "token_values":[], "token_types": [],
+                        "token_value_str":[], "token_type_of_values":[]
+                        }
 
 
     def __call__(self, cell) -> tuple[torch.LongTensor, torch.LongTensor]:
@@ -90,9 +92,8 @@ class GeneTokenizer:
         token_type_ids = []
 
         # [CLS]
-        if self.config.classification_token:
-            input_tokens.append(self.cls_token)
-            token_type_ids.append(0)
+        input_tokens.append(self.cls_token)
+        token_type_ids.append(0)
 
 
         # e.g. [AGE_TOKEN] [CELL_TOKEN] ... [TISSUE_TOKEN]

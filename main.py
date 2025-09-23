@@ -23,12 +23,13 @@ from polygene.data_utils.sharded_trainer import ShardedTrainer
 
 
 if __name__ == "__main__":
-    set_seed(42)
     config = parse_args()
+    set_seed(config.seed)
     distributed_state = accelerate.PartialState()
 
     tokenizer = GeneTokenizer(config)
     config: TrainConfig = config
+    
 
     os.environ.update({  # https://docs.wandb.ai/guides/track/environment-variables
         "WANDB_PROJECT": "Polygene",
