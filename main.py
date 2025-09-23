@@ -61,7 +61,7 @@ if __name__ == "__main__":
             model_config.obs_included_phenotypes = tokenizer.phenotypic_types
             model_config.phenotypic_tokens_map = tokenizer.phenotypic_tokens_map
             model_config.n_bins = tokenizer.num_bins + 1
-            model_config.classification_token = True
+        model_config.classification_token = config.classification_token
         model_kwargs = {"attn_implementation": "flash_attention_2"} if config.use_flash_attn else dict()
         model = Polygene._from_config(model_config, **model_kwargs)
     elif "checkpoint" in config.pretrained_model_path:
