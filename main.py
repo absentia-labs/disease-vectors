@@ -57,6 +57,11 @@ if __name__ == "__main__":
         model_config.vocab_size = tokenizer.vocab_size # vocab_size and type_vocab_size determine model embeddings row length
         model_config.type_vocab_size = tokenizer.type_vocab_size
         model_config.pad_token_id = tokenizer.convert_tokens_to_ids(tokenizer.pad_token)
+        if config.classification_token: 
+            model_config.obs_included_phenotypes = tokenizer.phenotypic_types
+            model_config.phenotypic_tokens_map = tokenizer.phenotypic_tokens_map
+            model_config.n_bins = tokenizer.num_bins + 1
+            model_config.classification_token = True
         model_kwargs = {"attn_implementation": "flash_attention_2"} if config.use_flash_attn else dict()
         model = Polygene._from_config(model_config, **model_kwargs)
     elif "checkpoint" in config.pretrained_model_path:

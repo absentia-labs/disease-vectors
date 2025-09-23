@@ -7,8 +7,9 @@ Hence, there is significantly more code because vanilla DistilBERT has no `token
 from typing import Optional, Tuple, Union
 
 import torch
-from torch import nn
+import numpy as np
 import transformers
+from torch import nn
 from transformers.activations import get_activation
 from transformers.modeling_outputs import MaskedLMOutput
 from transformers.utils import logging
@@ -58,13 +59,37 @@ class PositionlessEmbeddings(nn.Module):
         embeddings = self.dropout(embeddings)
         return embeddings
         
-class  MultiPhenotypePredictionHead(nn.Module):
-    def __init__(self, ):
+
+class  MultiPredictionHead(nn.Module):
+    def __init__(self, config, included_phenotypes, phenotypic_token_map, n_bins, loss):
         super().__init__()
-        ...
-    def forward(self, x, loss_fct):
+        self.loss = loss
+        self.n_bins = n_bins
+        self.included_phenotypes = included_phenotypes
+        self.phenotypic_token_map = phenotypic_token_map
+        self.obs_prediction_heads = nn.ModuleList([nn.Linear(config.dim, len(phenotypic_token_map[phenotype])) for phenotype in included_phenotypes])
+
+        self.genotype_prediction_head =  nn.Linear(config.dim, n_bins)
+        self.phenotype_offset_in_vocab = np.cumsum([1] + [len(phenotypic_token_map[phenotype]) for phenotype in included_phenotypes])
+
+    def forward(self, x, y=None):
+        # x (B, S, E) and y (B, S,)
+        classification_token, genotype_tokens = x[:, 0, :], x[:, 1+len(self.included_phenotypes):, :]
+        obs_y_pred = [head(classification_token) for head in self.obs_prediction_heads] # (P, B, P_i)
+        genotype_y_pred = self.genotype_prediction_head(genotype_tokens) # (B, G, BINS)
         
-        return x
+        total_loss = None
+        if y is not None:
+            phenotype_loss = sum([self.loss(obs_y_pred[idx], y[:, 1+idx] - self.phenotype_offset_in_vocab[idx]) for idx in range(len(self.included_phenotypes))])
+            genotype_loss = self.loss(genotype_y_pred.view(-1, self.n_bins), (y[:, 1+len(self.included_phenotypes):] - self.phenotype_offset_in_vocab[-1]).view(-1))
+            total_loss = phenotype_loss + genotype_loss
+        
+        reconstruct_x = x.new_zeros(x.shape[0], x.shape[1], self.phenotype_offset_in_vocab[-1] + self.n_bins)
+        reconstruct_x[:, 1+len(self.included_phenotypes):, -self.n_bins:] = genotype_y_pred
+        for idx, phenotype_pred in enumerate(obs_y_pred):
+            reconstruct_x[:, 1+idx, self.phenotype_offset_in_vocab[idx]:self.phenotype_offset_in_vocab[idx+1]] = phenotype_pred
+        return reconstruct_x, total_loss
+
 
 class Polygene(transformers.DistilBertPreTrainedModel):
     """
@@ -77,6 +102,7 @@ class Polygene(transformers.DistilBertPreTrainedModel):
         """
         super().__init__(config)
 
+        self.mlm_loss_fct = nn.CrossEntropyLoss(label_smoothing=0.25)
         if not hasattr(config, "updates_memory") or config.updates_memory is None: # Load in the checkpoint version
             config.updates_memory = {
                 "token_values": [],
@@ -88,16 +114,18 @@ class Polygene(transformers.DistilBertPreTrainedModel):
         self.transformer = transformers.models.distilbert.modeling_distilbert.Transformer(config)  # encoder
         self._use_flash_attention_2 = config._attn_implementation == "flash_attention_2"
 
-        self.prediction_head = nn.Sequential(
-            #nn.Linear(config.dim, config.dim),
-            #get_activation(config.activation),
-            #nn.LayerNorm(config.dim, eps=1e-12),
-            nn.Linear(config.dim, config.vocab_size),
-        )
+        if not self.config.classification_token:
+            self.prediction_head = nn.Sequential(
+                #nn.Linear(config.dim, config.dim),
+                #get_activation(config.activation),
+                #nn.LayerNorm(config.dim, eps=1e-12),
+                nn.Linear(config.dim, config.vocab_size),
+            )
+        else:
+            self.prediction_head = MultiPredictionHead(config, config.obs_included_phenotypes, config.phenotypic_tokens_map, config.n_bins, self.mlm_loss_fct)
 
         # Initialize weights and apply final processing
         self.post_init()
-        self.mlm_loss_fct = nn.CrossEntropyLoss(label_smoothing=0.25)
 
     def forward(
         self,
@@ -148,9 +176,11 @@ class Polygene(transformers.DistilBertPreTrainedModel):
         )
         hidden_state_embeddings = distilbert_output[0] # (B, S, D)
 
-        prediction_logits =  self.prediction_head(hidden_state_embeddings) # (B, S, V), V for vocabulary size
-
-        mlm_loss = self.mlm_loss_fct(prediction_logits.view(-1, prediction_logits.size(-1)), labels.view(-1)) if labels is not None else None
+        if not self.config.classification_token:
+            prediction_logits = self.prediction_head(hidden_state_embeddings) # (B, S, V), V for vocabulary size
+            mlm_loss = self.mlm_loss_fct(prediction_logits.view(-1, prediction_logits.size(-1)), labels.view(-1)) if labels is not None else None
+        else:
+            prediction_logits, mlm_loss = self.prediction_head(hidden_state_embeddings, labels)
 
         return MaskedLMOutput(
             loss=mlm_loss,
