@@ -831,7 +831,7 @@
     "[muscle_organ]",
     "[pancreas]"
   ],
-  "sex": ["[male]", "[female]", "[unknown]"],
+  "sex": ["[male]", "[female]", "[unknown_sex]"],
   "development_stage": [
     "[human_adult_stage]",
     "[43-year-old_human_stage]",
@@ -919,7 +919,7 @@
     "[18-year-old_human_stage]",
     "[52-year-old_human_stage]",
     "[55-year-old_human_stage]",
-    "[unknown]",
+    "[unknown_development_stage]",
     "[33-year-old_human_stage]",
     "[65-year-old_human_stage]",
     "[36-year-old_human_stage]",

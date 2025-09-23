@@ -97,8 +97,8 @@ class GeneTokenizer:
 
 
         # e.g. [AGE_TOKEN] [CELL_TOKEN] ... [TISSUE_TOKEN]
-        input_tokens.extend([normalise_str(cell.obs[phenotypic_type].item()) if phenotypic_type in cell.obs.columns else self.mask_token
-                              for phenotypic_type in self.phenotypic_types])
+        input_tokens.extend([normalise_str(cell.obs[phenotypic_type].item() + ("_" + phenotypic_type if cell.obs[phenotypic_type].item() == "unknown" else ""))
+                              if phenotypic_type in cell.obs.columns else self.mask_token for phenotypic_type in self.phenotypic_types])
         
         # Distinct token_type_id for each phenotype token
         token_type_ids.extend([1 + self.phenotypic_types.index(phenotypic_type) for phenotypic_type in self.phenotypic_types])

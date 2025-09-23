@@ -112,7 +112,7 @@ def parse_args(args: list[str] = None) -> BaseConfig:
     parser.add_argument("--dataloader_num_workers", default=4, type=int)
 
     # Classifcation Modifications
-    parser.add_argument("--classification_token", type=bool, action='store_true', help="Self Supervised Classification on a CLS Token: unified genome-phenome manifold")
+    parser.add_argument("--classification_token", action='store_true', help="Self Supervised Classification on a CLS Token: unified genome-phenome manifold")
     parser.add_argument("--sparse", action="store_true", help="drop 0 expression genes or always have top max length highly variable genes in order")
     parser.add_argument("--seed", type=int, help="seed to set all random generators to", default=42)
 

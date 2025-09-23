@@ -5,10 +5,10 @@ CUDA_DEVICE_ORDER="PCI_BUS_ID" CUDA_VISIBLE_DEVICES=1 accelerate launch --mixed_
 --pretrained_model_path 'polygene/model/polygene_architecture.json' \
 --eval_data_paths 'data/test_cxg.h5ad' \
 --shard_size 10000 \
---max_length 5008 \
+--max_length 1008 \
 --num_top_genes 58604 \
 --vocab_path 'polygene/data_utils/vocab/cxg_phenotypic_tokens_map.json' \
---obs_included_phenotypes disease tissue_general tissue cell_type sex development_stage assay \
+--obs_included_phenotypes disease tissue cell_type sex development_stage assay \
 --per_device_eval_batch_size 24 \
 --dataloader_num_workers 6 \
 --output_dir '../runs/polygene_cls' \
