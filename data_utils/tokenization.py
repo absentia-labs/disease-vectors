@@ -116,6 +116,10 @@ class GeneTokenizer:
         o = np.argsort(gene_ids) # Sort genes so HVG are first
         gene_ids, bin_ids = gene_ids[o], bin_ids[o]
 
+        # Keep only top genes
+        top_genes_mask = gene_ids < self.config.num_top_genes
+        gene_ids, bin_ids = gene_ids[top_genes_mask], bin_ids[top_genes_mask]
+
         input_tokens.extend(_prepend_bin(bin_ids))
         token_type_ids.extend(gene_ids + self.gene_token_type_offset)
 
@@ -153,16 +157,19 @@ class GeneTokenizer:
         they are both an offset away from the correct index in our vocabulary, so
         additional postprocessing is performed on both `bin_ids` and `gene_ids` in __call__().
         """
-        # We avoid loading the dense gene expression array
-        sparse_expr_arr = sparse_expr_arr.tocsr() # Other datasets have column sparse matrices
-        gene_indices = sparse_expr_arr.indices  # corresponds to the indices of genes with nonzero expression
-        gene_expressions = sparse_expr_arr.data  # corresponds to the gene expression values for these genes
-
-        gene_expression_bins = np.digitize(gene_expressions, self.config.bin_edges)  # bin gene expression values
+        sparse_expr_arr = sparse_expr_arr.tocsr()
         if sparse:
-            expressed_genes_mask = np.flatnonzero(gene_expression_bins) # remove bin_0
+            # We avoid loading the dense gene expression array
+            gene_indices = sparse_expr_arr.indices  # corresponds to the indices of genes with nonzero expression
+            gene_expressions = sparse_expr_arr.data  # corresponds to the gene expression values for these genes
+            gene_expression_bins = np.digitize(gene_expressions, self.config.bin_edges)  # bin gene expression values
+            expressed_genes_mask = np.flatnonzero(gene_expression_bins)  # remove bin_0
             return gene_expression_bins[expressed_genes_mask], gene_indices[expressed_genes_mask]
-        return gene_expression_bins, gene_indices
+        else:
+            dense_expr_arr = sparse_expr_arr.toarray()[0] 
+            gene_indices = np.arange(dense_expr_arr.shape[0])
+            gene_expression_bins = np.digitize(dense_expr_arr, self.config.bin_edges) 
+            return gene_expression_bins, gene_indices
 
     def _check_valid_tokens(self, tokens: str | list[str]) -> tuple[bool, list[str]]:
         """ 

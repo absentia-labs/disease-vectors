@@ -13,6 +13,7 @@ CUDA_DEVICE_ORDER="PCI_BUS_ID" CUDA_VISIBLE_DEVICES=1 accelerate launch --mixed_
 --dataloader_num_workers 6 \
 --output_dir '../runs/polygene_cls' \
 --classification_token \
+--sparse \
 --use_flash_attn \
 mlm \
 --gene_mask_prob 0.1 \

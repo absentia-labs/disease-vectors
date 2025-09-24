@@ -94,16 +94,17 @@ def torch_mask_tokens(batch, tokenizer: GeneTokenizer, phenotype_mask_prob, geno
 
 
         # Replacing 1 / (num_bins + 1) with a random not expressed token, so that bin_0 is a label sometimes
-        rand_swap_prob = 1 / (2*(tokenizer.num_bins + 1))
-        rand_swapped_indices = torch.bernoulli(gene_masked_indices.float() * rand_swap_prob, generator=rng).bool()
-        for batch_idx in range(len(batch["input_ids"])):
-            not_expr_genes = torch.ones(tokenizer.config.num_top_genes)
-            not_expr_genes.scatter_(0, batch["token_type_ids"][batch_idx][gene_tokens_mask[batch_idx]] - tokenizer.gene_token_type_offset, torch.zeros_like(not_expr_genes))
-            num_samples = rand_swapped_indices[batch_idx].long().sum().item()
-            if num_samples > 0:  # very unlikely to have 0 samples
-                rand_not_expr_gene_indices = torch.multinomial(not_expr_genes, num_samples, replacement=False)
-                batch["labels"][batch_idx][rand_swapped_indices[batch_idx]] = tokenizer.convert_tokens_to_ids("bin_0")
-                batch["token_type_ids"][batch_idx][rand_swapped_indices[batch_idx]] = rand_not_expr_gene_indices + tokenizer.gene_token_type_offset
+        if not tokenizer.config.sparse:
+            rand_swap_prob = 1 / (2*(tokenizer.num_bins + 1))
+            rand_swapped_indices = torch.bernoulli(gene_masked_indices.float() * rand_swap_prob, generator=rng).bool()
+            for batch_idx in range(len(batch["input_ids"])):
+                not_expr_genes = torch.ones(tokenizer.config.num_top_genes)
+                not_expr_genes.scatter_(0, batch["token_type_ids"][batch_idx][gene_tokens_mask[batch_idx]] - tokenizer.gene_token_type_offset, torch.zeros_like(not_expr_genes))
+                num_samples = rand_swapped_indices[batch_idx].long().sum().item()
+                if num_samples > 0:  # very unlikely to have 0 samples
+                    rand_not_expr_gene_indices = torch.multinomial(not_expr_genes, num_samples, replacement=False)
+                    batch["labels"][batch_idx][rand_swapped_indices[batch_idx]] = tokenizer.convert_tokens_to_ids("bin_0")
+                    batch["token_type_ids"][batch_idx][rand_swapped_indices[batch_idx]] = rand_not_expr_gene_indices + tokenizer.gene_token_type_offset
 
     # Phenotype MLM
     if phenotype_mask_prob > 0:

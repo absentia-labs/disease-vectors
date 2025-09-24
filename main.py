@@ -29,6 +29,7 @@ if __name__ == "__main__":
 
     tokenizer = GeneTokenizer(config)
     config: TrainConfig = config
+    np.random.shuffle(config.train_data_paths)
     
 
     os.environ.update({  # https://docs.wandb.ai/guides/track/environment-variables
@@ -36,14 +37,8 @@ if __name__ == "__main__":
         "WANDB_LOG_MODEL": "false",
     })
 
-    os.makedirs('polygene/' + config.output_dir, exist_ok=True) 
-    working_dir = os.path.join(
-        "polygene", f"{config.output_dir}_run_{len(os.listdir(os.path.dirname('polygene/' + config.output_dir)))}"
-    )
-
+    working_dir = config.output_dir
     os.makedirs(working_dir, exist_ok=True) 
-    with open(os.path.join(working_dir, "tokenizer.pkl"), "wb") as f: # Save tokenizer
-        pickle.dump(tokenizer, f)
 
     # Divide `config.train_data_paths` across the processes. Processes is different from workers handled by accelerate and for multi-GPU
     assert len(config.train_data_paths) % distributed_state.num_processes == 0, "num train paths is multiple of processes"
@@ -90,7 +85,7 @@ if __name__ == "__main__":
 
     training_args = transformers.TrainingArguments(
         output_dir=working_dir,
-        overwrite_output_dir=False,  # saving tokenizer first
+        overwrite_output_dir=True,  # saving tokenizer first
         
         logging_steps=config.per_device_train_batch_size * 4,
         logging_dir=working_dir,

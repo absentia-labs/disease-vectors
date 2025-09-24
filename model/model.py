@@ -78,25 +78,6 @@ class  MultiPredictionHead(nn.Module):
         obs_y_pred = [head(classification_token) for head in self.obs_prediction_heads] # (P, B, P_i)
         genotype_y_pred = self.genotype_prediction_head(genotype_tokens) # (B, G, BINS)
         
-
-#        total_loss = None
-#        if y is not None:
-#            phenotype_loss = 0
-#            for idx, head in enumerate(self.obs_prediction_heads):
-#                labels = (y[:, 1+idx] - self.phenotype_offset_in_vocab[idx]).clamp(min=-100)
-#                loss_val = self.loss(obs_y_pred[idx], labels)
-#                print(f"[DEBUG] phenotype {self.included_phenotypes[idx]} "
-#                    f"labels min={labels.min().item()} max={labels.max().item()} "
-#                    f"loss={loss_val.item():.6f}")
-#                phenotype_loss += loss_val
-#
-#            genotype_labels = (y[:, 1+len(self.included_phenotypes):] - self.phenotype_offset_in_vocab[-1]).clamp(min=-100).view(-1)
-#            genotype_loss = self.loss(genotype_y_pred.view(-1, self.n_bins), genotype_labels)
-#            print(f"[DEBUG] genotype labels min={genotype_labels.min().item()} max={genotype_labels.max().item()} "
-#                f"loss={genotype_loss.item():.6f}")
-#
-#            total_loss = phenotype_loss + genotype_loss
-#
         total_loss = None
         if y is not None:
             phenotype_loss = sum([self.loss(obs_y_pred[idx], (y[:, 1+idx] - self.phenotype_offset_in_vocab[idx]).clamp(min=-100)) for idx in range(len(self.included_phenotypes))])
