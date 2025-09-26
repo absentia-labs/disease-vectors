@@ -69,24 +69,26 @@ def metrics_wrapper(model:Polygene, tokenizer: GeneTokenizer):
         # Extract predictions and labels from the EvalPrediction object
         predictions = p.predictions # (B, S) argmax from preprocess_logits
         labels = p.label_ids # (B, S)  B = shard size/ eval set size, S = max sequence length, filled with token IDs
+        inputs = p.inputs
 
         # Ignoring -100 used for non-masked tokens (pad, cls, eos tokens)
-        mask = labels != -100
+        mask_token_id = tokenizer.convert_tokens_to_ids(tokenizer.mask_token)
+        mask = inputs == mask_token_id
         overall_metrics = classification_metrics(predictions[mask], labels[mask]) # global masks flatten the array
 
         metrics.update({f"overall_{metric_name}": metric_val for metric_name, metric_val in overall_metrics.items()})
 
         # Compute metrics per phenotype type aka per token sequence column
         for i, phenotypic_type in enumerate(tokenizer.phenotypic_types):
-            y_pred, y = predictions[:, i + 1], labels[:, i + 1] # What happens to the phenotype dropping in collator?
-            mask = y != -100
+            y_pred, y, x = predictions[:, i + 1], labels[:, i + 1], inputs[:, i+1] # What happens to the phenotype dropping in collator?
+            mask = x == mask_token_id
             if len(y[mask]):
                 phenotype_metrics = classification_metrics(y_pred[mask], y[mask])
                 metrics.update({f"{phenotypic_type}_{key}": value for key, value in phenotype_metrics.items()})
 
         # Metrics for genotype expression predictions (maybe only if theres gene masking)
-        y_pred, y = predictions[:, tokenizer.gene_token_type_offset:], labels[:, tokenizer.gene_token_type_offset:]
-        mask = y != -100
+        y_pred, y, x = predictions[:, tokenizer.gene_token_type_offset:], labels[:, tokenizer.gene_token_type_offset:], inputs[:, tokenizer.gene_token_type_offset:]
+        mask = x == mask_token_id
         gene_metrics = classification_metrics(y_pred[mask], y[mask])
         metrics.update({f"Genotype_{key}": value for key, value in gene_metrics.items()})
 

@@ -10,7 +10,6 @@ import os
 from dataclasses import dataclass
 from braceexpand import braceexpand
 
-
 @dataclass
 class BaseConfig:
     subcommand: str
@@ -75,9 +74,6 @@ class TrainConfig(BaseConfig):
         eval_paths = set(self.eval_data_paths)
         self.train_data_paths = [path for paths in self.train_data_paths for path in braceexpand(paths) if path not in eval_paths]
 
-        
-
-
 def parse_args(args: list[str] = None) -> BaseConfig:
     """
     Get command line arguments.
@@ -93,7 +89,7 @@ def parse_args(args: list[str] = None) -> BaseConfig:
 
     parser.add_argument("--bin_edges", nargs="+", type=float,
                         help="Provided `n` edges, will partition the gene expression values into `n + 1` bins, these edges are shared across all genes.",
-                        default=[0.5, 1, 2, 3, 4, 5, 6, 7, 8])
+                        default=[0.5, 1, 2, 4, 6, 8])
     parser.add_argument("--pretrained_model_path", type=str, help="Path to a pretrained model to initialize from.")
     parser.add_argument("--shard_size", default=10000, type=int, help="The number of observations in each AnnData shard.")
     parser.add_argument("--eval_data_paths", nargs="+", type=str, help="One or more (possibly `braceexpand`-able) paths to validation h5ad file(s).")
@@ -124,7 +120,7 @@ def parse_args(args: list[str] = None) -> BaseConfig:
     mlm_subparser.add_argument("--weight_decay", type=float, required=True)
     mlm_subparser.add_argument("--warmup_ratio", default=0.0, type=float)
     mlm_subparser.add_argument("--save_steps", type=int, required=True)
-    mlm_subparser.add_argument("--num_saves", type=int, default=5, help="number of check points to save before overwriting oldest one")
+    mlm_subparser.add_argument("--num_saves", type=int, default=25, help="number of check points to save before overwriting oldest one")
     mlm_subparser.add_argument("--eval_steps", type=int, required=True)
     mlm_subparser.add_argument("--best_metric", type=str, default="overall_f1", help="best metric to choose final model")
 

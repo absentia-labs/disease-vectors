@@ -109,7 +109,7 @@ class GeneAttribution:
         return self.cells
     
 
-    def get_embeddings(self, phenotype, mask=False, mask_all=False):
+    def get_embeddings(self, phenotype, mask=False, mask_all=False, classification_token=True):
         """
         Get model embeddings of a specific phenotypic type before the classification head
 
@@ -129,7 +129,7 @@ class GeneAttribution:
                 output = self.model(**{key: val.to(self.model.device).unsqueeze(0) for key, val in cell_dict.items() if key != 'str_labels'})
 
             encoder_output = output.hidden_states # tensor shape (B, S, D)
-            embeddings.append(encoder_output[:, phenotypic_type_index, :])
+            embeddings.append(encoder_output[:, phenotypic_type_index if not classification_token else 0, :])
             labels.append(cell_dict['str_labels'][phenotypic_type_index])
             predictions.append(self.tokenizer.flattened_tokens[output.logits.argmax(dim=-1).squeeze()[phenotypic_type_index]])
         

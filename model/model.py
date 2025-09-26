@@ -82,7 +82,7 @@ class  MultiPredictionHead(nn.Module):
         if y is not None:
             phenotype_loss = sum([self.loss(obs_y_pred[idx], (y[:, 1+idx] - self.phenotype_offset_in_vocab[idx]).clamp(min=-100)) for idx in range(len(self.included_phenotypes))])
             genotype_loss = self.loss(genotype_y_pred.view(-1, self.n_bins), (y[:, 1+len(self.included_phenotypes):] - self.phenotype_offset_in_vocab[-1]).clamp(min=-100).view(-1))
-            total_loss = phenotype_loss + genotype_loss
+            total_loss = 0.5 * phenotype_loss/len(self.included_phenotypes) + 0.5 * genotype_loss
         
         reconstruct_x = x.new_zeros(x.shape[0], x.shape[1], self.phenotype_offset_in_vocab[-1] + self.n_bins)
         reconstruct_x[:, 1+len(self.included_phenotypes):, -self.n_bins:] = genotype_y_pred
@@ -116,9 +116,9 @@ class Polygene(transformers.DistilBertPreTrainedModel):
 
         if not self.config.classification_token:
             self.prediction_head = nn.Sequential(
-                #nn.Linear(config.dim, config.dim),
-                #get_activation(config.activation),
-                #nn.LayerNorm(config.dim, eps=1e-12),
+                nn.Linear(config.dim, config.dim),
+                get_activation(config.activation),
+                nn.LayerNorm(config.dim, eps=1e-12),
                 nn.Linear(config.dim, config.vocab_size),
             )
         else:
@@ -254,7 +254,7 @@ def load_trained_model(directory, checkpoint_n=-1):
     with open(directory + "tokenizer.pkl", "rb") as f:
         tokenizer = pickle.load(f)
         
-    model = Polygene.from_pretrained(directory + sorted([x for x in os.listdir(directory) if x.startswith('checkpoint-')])[checkpoint_n])#, attn_implementation="flash_attention_2") # get last checkpoint of run
+    model = Polygene.from_pretrained(directory + sorted([x for x in os.listdir(directory) if x.startswith('checkpoint-')])[checkpoint_n], ignore_mismatched_sizes=True)#, attn_implementation="flash_attention_2") # get last checkpoint of run
     model.to("cuda:0")
     model.eval()
     return model, tokenizer

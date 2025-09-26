@@ -87,7 +87,7 @@ if __name__ == "__main__":
         output_dir=working_dir,
         overwrite_output_dir=True,  # saving tokenizer first
         
-        logging_steps=config.per_device_train_batch_size * 4,
+        logging_steps=200,
         logging_dir=working_dir,
         logging_first_step=True,
 
@@ -118,6 +118,8 @@ if __name__ == "__main__":
         evaluation_strategy="steps",
         eval_steps=config.eval_steps,
         metric_for_best_model=config.best_metric,   
+        eval_delay=0,
+        include_inputs_for_metrics=True,
     )
 
     trainer = ShardedTrainer(

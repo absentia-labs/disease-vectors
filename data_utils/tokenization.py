@@ -60,6 +60,7 @@ class GeneTokenizer:
         
         # Tag to be manually changed for models to grow with unseen vocabulary
         self.flexible = False # During training do you want to be able to grow vocabularies and add new phenotypes
+        self.bypass_inference = False # just masks unknown tokens
         self.neural_updates = {
                         "token_values":[], "token_types": [],
                         "token_value_str":[], "token_type_of_values":[]
@@ -136,7 +137,10 @@ class GeneTokenizer:
                 # get the phenotype category they are a part of
                 invalid_token_type_ids = [token_type_ids[input_tokens.index(invalid_token)] for invalid_token in invalid_tokens]
                 self.add_token_values(invalid_tokens, invalid_token_type_ids)
-            else: 
+            elif self.bypass_inference:
+                for invalid_token in invalid_tokens:
+                    input_tokens[input_tokens.index(invalid_token)] = self.mask_token 
+            else:
                 raise ValueError(f"Out of vocabulary tokens: {invalid_tokens}")
 
         return (torch.LongTensor(self.convert_tokens_to_ids(input_tokens)),

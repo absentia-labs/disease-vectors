@@ -79,7 +79,8 @@ def torch_mask_tokens(batch, tokenizer: GeneTokenizer, phenotype_mask_prob, geno
         On `1 - SWAP_GENE_IDS_PROB` of sequences we perform no swapping,
         since that probably aligns closer with downstream tasks.
     """
-    batch["labels"] = torch.full_like(batch["input_ids"], -100, dtype=torch.long) 
+    batch["labels"] = batch["input_ids"].clone()
+
 
     phenotypic_tokens_mask = tokenizer.get_phenotypic_tokens_mask(batch["token_type_ids"]) & (batch["input_ids"] != tokenizer.convert_tokens_to_ids(tokenizer.mask_token))
     gene_tokens_mask = tokenizer.get_gene_tokens_mask(batch["token_type_ids"])
@@ -89,12 +90,12 @@ def torch_mask_tokens(batch, tokenizer: GeneTokenizer, phenotype_mask_prob, geno
     if genotype_mask_prob > 0:
         gene_prob_matrix = torch.zeros(batch["input_ids"].shape).masked_fill(gene_tokens_mask, value=genotype_mask_prob)
         gene_masked_indices = torch.bernoulli(gene_prob_matrix, generator=rng).bool()
-        batch["labels"][gene_masked_indices] = batch["input_ids"][gene_masked_indices]
+        #batch["labels"][gene_masked_indices] = batch["input_ids"][gene_masked_indices]
         batch["input_ids"][gene_masked_indices] = tokenizer.convert_tokens_to_ids(tokenizer.mask_token)
 
 
         # Replacing 1 / (num_bins + 1) with a random not expressed token, so that bin_0 is a label sometimes
-        if not tokenizer.config.sparse:
+        if tokenizer.config.sparse:
             rand_swap_prob = 1 / (2*(tokenizer.num_bins + 1))
             rand_swapped_indices = torch.bernoulli(gene_masked_indices.float() * rand_swap_prob, generator=rng).bool()
             for batch_idx in range(len(batch["input_ids"])):
@@ -110,7 +111,7 @@ def torch_mask_tokens(batch, tokenizer: GeneTokenizer, phenotype_mask_prob, geno
     if phenotype_mask_prob > 0:
         phenotype_prob_matrix = torch.zeros(batch["labels"].shape).masked_fill(phenotypic_tokens_mask, value=phenotype_mask_prob)
         phenotype_masked_indices = torch.bernoulli(phenotype_prob_matrix, generator=rng).bool()
-        batch["labels"][phenotype_masked_indices] = batch["input_ids"][phenotype_masked_indices]
+        #batch["labels"][phenotype_masked_indices] = batch["input_ids"][phenotype_masked_indices]
         batch["input_ids"][phenotype_masked_indices] = tokenizer.convert_tokens_to_ids(tokenizer.mask_token)
 
         # Commented because not consistent with masking, pad token is still attn matrix for these but not for others. 
