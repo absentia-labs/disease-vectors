@@ -39,6 +39,8 @@ if __name__ == "__main__":
 
     working_dir = config.output_dir
     os.makedirs(working_dir, exist_ok=True) 
+    with open(os.path.join(working_dir, "tokenizer.pkl"), "wb") as f: # Save tokenizer so you can load check points while training.
+        pickle.dump(tokenizer, f)
 
     # Divide `config.train_data_paths` across the processes. Processes is different from workers handled by accelerate and for multi-GPU
     assert len(config.train_data_paths) % distributed_state.num_processes == 0, "num train paths is multiple of processes"

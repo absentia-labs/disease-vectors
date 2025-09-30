@@ -11,7 +11,7 @@ CUDA_DEVICE_ORDER="PCI_BUS_ID" CUDA_VISIBLE_DEVICES=1 accelerate launch --mixed_
 --obs_included_phenotypes disease tissue cell_type sex development_stage assay \
 --per_device_eval_batch_size 24 \
 --dataloader_num_workers 8 \
---output_dir '/media/lleger/LaCie/POLYGENE' \
+--output_dir 'runs/POLYGENE_test/' \
 --classification_token \
 --sparse \
 --use_flash_attn \

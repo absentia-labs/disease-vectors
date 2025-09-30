@@ -186,3 +186,4 @@ scripts/*
 *-U.ipynb
 *-U.sh
 *.csv
+*.svg
