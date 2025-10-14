@@ -3,7 +3,7 @@ from tqdm import tqdm
 import os, json, argparse
 import pandas as pd, numpy as np
 import sys
-sys.path.append('../../../')
+sys.path.append('../../')
 from polygene.model.model import load_trained_model
 from itertools import product
 import torch
@@ -11,11 +11,10 @@ from polygene.eval.metrics import prepare_cell
 import gc
 
 TEST_CHUNK_ID = 2502
-SAVE_DIR = "/media/lleger/LaCie/disease-vector/latent_space/"
-diseases = json.load(open(SAVE_DIR + "../diseases.json"))['diseases']
-age_map = json.load(open('../../data_utils/vocab/age_map.json'))
-
 DATASET = "/media/rohola/ssd_storage/primary/"
+SAVE_DIR = "/media/lleger/LaCie/mit/disease_vector/"
+age_map = json.load(open('../data_utils/vocab/age_map.json'))
+diseases = json.load(open(SAVE_DIR + "diseases.json"))['diseases']
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Get Cells")
@@ -39,7 +38,8 @@ if __name__ == "__main__":
     required_cells = {combo:args['n_cells'] for combo in product(*[eval(args[phene]) for phene in included_phenotypes])}
 
     if args['embeddings']:
-        model, tok = load_trained_model('../../../runs/gesam_polygene_run_4/', checkpoint_n=-1)
+        model, tok = load_trained_model('../../runs/gesam_polygene_run_4/', checkpoint_n=-1)
+        tok.bypass_inference=True
 
 anndata_slices, total_cells, chunk_index = [], 0, 0
 for idx, file_path in enumerate(tqdm([DATASET + f'cxg_chunk{i}.h5ad' for i in range(TEST_CHUNK_ID, TEST_CHUNK_ID+args["n_chunks"])], desc="Searching dataset")):
