@@ -222,6 +222,11 @@ class AttributionAnalysis():
             topk_attributed = set(attributed_genes[attributed_genes > attributed_genes.mean()].index.tolist())
         elif method_top_attr == "Q3":
             topk_attributed = set(attributed_genes[attributed_genes > attributed_genes.quantile(q=0.75)].index.tolist())
+        elif method_top_attr == "IQR":
+            q1, q3 = attributed_genes.quantile([0.25, 0.75])
+            iqr = q3 - q1
+            threshold = q3 + 1.5 * iqr
+            topk_attributed = set(attributed_genes[attributed_genes > threshold].index.tolist())
         else: 
             topk_attributed = set(attributed_genes.sort_values(ascending=False)[:k].index.tolist())
 

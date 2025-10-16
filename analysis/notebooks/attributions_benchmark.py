@@ -7,8 +7,13 @@ from polygene.data_utils.tokenization import normalise_str
 import matplotlib.pyplot as plt, seaborn as sns, numpy as np, pandas as pd
 from rapidfuzz import process, fuzz
 from polygene.analysis.attributions import AttributionAnalysis
+
 EMBEDDINGS_DIR = '/media/lleger/LaCie/mit/disease_vector/vector_data/'
-disease_vectors = pd.DataFrame(pd.read_pickle(EMBEDDINGS_DIR + "disease_vector_results.pkl"))
+
+cell_count = 8000
+cell_count_vectors = 500
+disease_vectors = pd.DataFrame(pd.read_pickle(EMBEDDINGS_DIR + f"disease_vector_results_{cell_count}_{cell_count_vectors}.pkl"))
+
 model_path = '/media/lleger/LaCie/mit/disease_vector/POLYGENE/' #"../../../runs/gesam_polygene_run_4/"
 m, tok = load_trained_model(model_path)
 tok.bypass_inference=True
@@ -20,6 +25,8 @@ DISEASES_DICT = {'respiratory': ['COVID-19','influenza','lung adenocarcinoma'],
 disease_list = sum(list(DISEASES_DICT.values()), [])
 results={}
 dv_genes = None
+K = 100
+METHOD = "IQR"
 for cell_group in tqdm(disease_vectors.columns.tolist(), desc="Disease Vectors"):
     disease, cell_type = tuple(cell_group.split(' '))
 
@@ -38,20 +45,20 @@ for cell_group in tqdm(disease_vectors.columns.tolist(), desc="Disease Vectors")
     opentarget_genes = analyzer.get_associated_genes(disease_cells.obs['disease_ontology_term_id'].tolist()[0], top=1000)
     if not opentarget_genes: continue
 
-    out_gwas, out_mi = analyzer.baselines(phenotype_obs_key='disease', case_label=disease_cells.obs['disease'].unique()[0], control_label="normal", k=50, method_top_attr="Q3", start_with_X=int(1e4))
+    out_gwas, out_mi = analyzer.baselines(phenotype_obs_key='disease', case_label=disease_cells.obs['disease'].unique()[0], control_label="normal", k=K, method_top_attr=METHOD, start_with_X=int(1e4))
     
     dv_genes = analyzer.disease_vector_ig(index_pairs=idx_pairs, only_protein_encoding=True).sum(axis=0)
-    out_dv = analyzer.validate_attributions(k=50, method_top_attr="Q3", phenotype_obs_value=disease_cells.obs['disease'].unique()[0], baseline=dv_genes)
+    out_dv = analyzer.validate_attributions(k=K, method_top_attr=METHOD, phenotype_obs_value=disease_cells.obs['disease'].unique()[0], baseline=dv_genes)
     
     analyzer.data = disease_cells
     analyzer.gradients(only_protein_encoding=True)
-    out_grad = analyzer.validate_attributions(k=50, method_top_attr="Q3", phenotype_obs_value=disease_cells.obs['disease'].unique()[0])
+    out_grad = analyzer.validate_attributions(k=K, method_top_attr=METHOD, phenotype_obs_value=disease_cells.obs['disease'].unique()[0])
     analyzer.integrated_gradients(only_protein_encoding=True, steps=10)
-    out_ig = analyzer.validate_attributions(k=50, method_top_attr="Q3", phenotype_obs_value=disease_cells.obs['disease'].unique()[0])
+    out_ig = analyzer.validate_attributions(k=K, method_top_attr=METHOD, phenotype_obs_value=disease_cells.obs['disease'].unique()[0])
     analyzer.deep_lift(only_protein_encoding=True)
-    out_dl = analyzer.validate_attributions(k=50, method_top_attr="Q3", phenotype_obs_value=disease_cells.obs['disease'].unique()[0])
+    out_dl = analyzer.validate_attributions(k=K, method_top_attr=METHOD, phenotype_obs_value=disease_cells.obs['disease'].unique()[0])
     results[cell_group] = {"GWAS": out_gwas, "Mutual Information": out_mi, "Disease Vector": out_dv, "Gradients": out_grad,
                             "Integrated Gradients": out_ig, "DeepLIFT": out_dl,
                             "OpenTargets":opentarget_genes}
 
-pd.to_pickle(results, EMBEDDINGS_DIR + 'attribution_results.pkl')
+pd.to_pickle(results, EMBEDDINGS_DIR + f'attribution_results_{K}_{METHOD}.pkl')
