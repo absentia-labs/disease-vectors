@@ -34,12 +34,12 @@ class AttributionAnalysis():
     def __call__(self, method='integrated_gradients', data=None):
         if data is None and self.data is None: return print("Missing data")
 
-    def gradients(self, phenotype="disease", reduction_func = None, only_protein_encoding=True, disable_tqdm=False):
+    def gradients(self, phenotype="disease", reduction_func = None, only_protein_encoding=True, disable_pbar=False):
         # reduction function needs to take a (S, D) matrix and return an (S,) vector. 
         reduction_func = (lambda m: np.linalg.norm(m, axis=1)) if reduction_func is None else reduction_func
         
         cell_attributions = []
-        for cell in tqdm(self.data, disable=disable_tqdm):
+        for cell in tqdm(self.data, disable=disable_pbar):
             x = prepare_cell(cell, self.tok)
             phenotype_value = x['str_labels'][1+self.tok.phenotypic_types.index(phenotype)]
             x['inputs_embeds'] = self.model.embeddings(x['input_ids'].to(self.device), x['token_type_ids'].to(self.device)).detach().requires_grad_(True)
@@ -58,16 +58,16 @@ class AttributionAnalysis():
         if only_protein_encoding and self.gene_biotypes is not None: # This can take an extra 2-3 minutes, perhaps save protein encoding information in a json
             ensembl_ids =  self.cell_attributions_df.columns.tolist()
             mask = [eid for eid in ensembl_ids if self.gene_biotypes.get(eid, "") == "protein_coding"]
-            print(f"Computed Attributions for {len(ensembl_ids)} genes and kept {len(mask)} protein encoding genes")
+            #print(f"Computed Attributions for {len(ensembl_ids)} genes and kept {len(mask)} protein encoding genes")
             self.cell_attributions_df = self.cell_attributions_df.loc[:, np.array(mask)]
 
         self.cell_attributions_df.columns = pd.Series(self.cell_attributions_df.columns).apply(lambda ensembl: self.ensembl_id_to_gene_name[ensembl])
         return self.cell_attributions_df
 
-    def integrated_gradients(self, phenotype="disease", reduction_func=None, steps=10, only_protein_encoding=True):
+    def integrated_gradients(self, phenotype="disease", reduction_func=None, steps=10, only_protein_encoding=True, disable_pbar=False):
         reduction_func = (lambda m: np.linalg.norm(m, axis=1)) if reduction_func is None else reduction_func
         cell_attributions = []
-        for cell in tqdm(self.data ):
+        for cell in tqdm(self.data, disable=disable_pbar):
             x = prepare_cell(cell, self.tok); phv = x['str_labels'][1+self.tok.phenotypic_types.index(phenotype)]
             inp = self.model.embeddings(x['input_ids'].to(self.device), x['token_type_ids'].to(self.device)).detach()
             base = torch.zeros_like(inp).to(self.device); diff = inp-base; grads = torch.zeros_like(inp)
@@ -80,18 +80,18 @@ class AttributionAnalysis():
         if only_protein_encoding and self.gene_biotypes is not None: # This can take an extra 2-3 minutes, perhaps save protein encoding information in a json
             ensembl_ids =  self.cell_attributions_df.columns.tolist()
             mask = [eid for eid in ensembl_ids if self.gene_biotypes.get(eid, "") == "protein_coding"]
-            print(f"Computed Attributions for {len(ensembl_ids)} genes and kept {len(mask)} protein encoding genes")
+            #print(f"Computed Attributions for {len(ensembl_ids)} genes and kept {len(mask)} protein encoding genes")
             self.cell_attributions_df = self.cell_attributions_df.loc[:, np.array(mask)]
 
         self.cell_attributions_df.columns = pd.Series(self.cell_attributions_df.columns).apply(lambda ensembl: self.ensembl_id_to_gene_name[ensembl])
         return self.cell_attributions_df
     
-    def disease_vector_ig(self, index_pairs, phenotype="disease", reduction_func=None, only_protein_encoding=True, steps=2):
+    def disease_vector_ig(self, index_pairs, phenotype="disease", reduction_func=None, only_protein_encoding=True, steps=2, disable_pbar=False):
         reduction_func = (lambda m: np.linalg.norm(m, axis=1)) if reduction_func is None else reduction_func
         phenotype_index = 1 + self.tok.phenotypic_types.index(phenotype)
         pair_attributions = []
         pair_labels = []
-        for i_base, i_target in tqdm(index_pairs):
+        for i_base, i_target in tqdm(index_pairs, disable=disable_pbar):
             base_cell = self.data[i_base]; target_cell = self.data[i_target]
             xb = prepare_cell(base_cell, self.tok); xt = prepare_cell(target_cell, self.tok)
             phenotype_value = xt['str_labels'][phenotype_index]
@@ -134,7 +134,7 @@ class AttributionAnalysis():
                 self.model.zero_grad()
                 L.backward(retain_graph=True)
                 gradients += scaled.grad.detach()
-            ig = (difference * gradients / 2).detach().cpu().numpy()
+            ig = (difference * gradients / steps).detach().cpu().numpy()
             values = reduction_func(ig[self.tok.gene_token_type_offset:])
             token_types = xt['token_type_ids'].cpu().numpy()
             ensembl_ids = [self.list_of_ensembl_ids[i - self.tok.gene_token_type_offset] for i in token_types[self.tok.gene_token_type_offset:]]
@@ -148,13 +148,11 @@ class AttributionAnalysis():
         self.cell_attributions_df = df
         return df
 
-
-
-    def deep_lift(self, phenotype="disease", reduction_func=None, only_protein_encoding=True):
+    def deep_lift(self, phenotype="disease", reduction_func=None, only_protein_encoding=True, disable_pbar=True):
         from captum.attr import DeepLift
         reduction_func = (lambda m: np.linalg.norm(m, axis=1)) if reduction_func is None else reduction_func
         cell_attributions=[]
-        for cell in tqdm(self.data):
+        for cell in tqdm(self.data, disable=disable_pbar):
             x = prepare_cell(cell, self.tok); phv = x['str_labels'][1+self.tok.phenotypic_types.index(phenotype)]
             feed = {k:v.unsqueeze(0).to(self.device) for k,v in x.items() if k!='str_labels'}
             feed['inputs_embeds'] = self.model.embeddings(x['input_ids'].to(self.device), x['token_type_ids'].to(self.device)).detach().requires_grad_(True).unsqueeze(0)
@@ -176,36 +174,54 @@ class AttributionAnalysis():
         if only_protein_encoding and self.gene_biotypes is not None: # This can take an extra 2-3 minutes, perhaps save protein encoding information in a json
             ensembl_ids =  self.cell_attributions_df.columns.tolist()
             mask = [eid for eid in ensembl_ids if self.gene_biotypes.get(eid, "") == "protein_coding"]
-            print(f"Computed Attributions for {len(ensembl_ids)} genes and kept {len(mask)} protein encoding genes")
+            #print(f"Computed Attributions for {len(ensembl_ids)} genes and kept {len(mask)} protein encoding genes")
             self.cell_attributions_df = self.cell_attributions_df.loc[:, np.array(mask)]
 
         self.cell_attributions_df.columns = pd.Series(self.cell_attributions_df.columns).apply(lambda ensembl: self.ensembl_id_to_gene_name[ensembl])
         return self.cell_attributions_df
         
     @staticmethod
-    def get_associated_genes(disease_ontology_term_id, top=100):
-        disease_ontology_term_id = disease_ontology_term_id.replace(':', '_')
+    def get_associated_genes(disease_name, disease_ontology_term_id, top=100):
         url = "https://api.platform.opentargets.org/api/v4/graphql"
-        
-        # disease associations query structure from a GraphQL API
-        query = """
+        disease_ontology_term_id = disease_ontology_term_id.replace(':', '_')
+
+        query_assoc = """
             query associatedTargets($diseaseId: String!, $size: Int!) {
                 disease(efoId: $diseaseId) {
                     id
                     name
                     associatedTargets(page: { index: 0, size: $size }) {
-                    count
-                    rows { target { id approvedSymbol } score }
+                        count
+                        rows { target { id approvedSymbol } score }
                     }
                 }
             }
         """
+
         variables = {"diseaseId": disease_ontology_term_id, "size": top}
-        response = requests.post(url, json={"query": query, "variables": variables}).json()['data']['disease'] #post instead of .get() because its a REST API
-        if response is not None:
-            response_dict = {row['target']['approvedSymbol']: row['score'] for row in response['associatedTargets']['rows'][:top]}
-            return response_dict
-        else: return {}
+        response = requests.post(url, json={"query": query_assoc, "variables": variables}).json()['data']['disease']
+
+        if response is None:
+            query_search = """
+                query search($term: String!) {
+                    search(queryString: $term, entityNames: ["disease"]) {
+                        hits { id name }
+                    }
+                }
+            """
+            search_resp = requests.post(url, json={"query": query_search, "variables": {"term": disease_name}}).json()
+            hits = search_resp.get('data', {}).get('search', {}).get('hits', [])
+            if hits:
+                new_id = hits[0]['id']
+                variables = {"diseaseId": new_id, "size": top}
+                response = requests.post(url, json={"query": query_assoc, "variables": variables}).json()['data']['disease']
+            else:
+                return {}
+
+        if response:
+            return {row['target']['approvedSymbol']: row['score'] for row in response['associatedTargets']['rows'][:top]}
+        return {}
+
     
     def validate_attributions(self, k=100, method_top_attr = "above_mean", phenotype_obs_key="disease", phenotype_obs_value="normal", baseline=None, 
                               start_with_top_X_genes=None):
@@ -214,11 +230,11 @@ class AttributionAnalysis():
         attributed_genes = self.cell_attributions_df.loc[(self.data.obs[phenotype_obs_key] == phenotype_obs_value).tolist(),:].sum(axis=0) if baseline is None else baseline
         if start_with_top_X_genes is not None: attributed_genes = attributed_genes.sort_values(ascending=False)[:start_with_top_X_genes]
         
-        opentarget_dict = self.get_associated_genes(ontology_id, k)
+        opentarget_dict = self.get_associated_genes(phenotype_obs_key, ontology_id, k)
         opentarget_genes = set(opentarget_dict.keys())
 
         if method_top_attr == "above_mean":
-            print("attribution mean:", round(attributed_genes.mean(), 5))
+            #print("attribution mean:", round(attributed_genes.mean(), 5))
             topk_attributed = set(attributed_genes[attributed_genes > attributed_genes.mean()].index.tolist())
         elif method_top_attr == "Q3":
             topk_attributed = set(attributed_genes[attributed_genes > attributed_genes.quantile(q=0.75)].index.tolist())
@@ -237,13 +253,14 @@ class AttributionAnalysis():
         recall = TP / (TP + FN) if (TP + FN) > 0 else 0
         precision = TP / (TP + FP) if (TP + FP) > 0 else 0
         odds, pval = fisher_exact([[TP,FP],[FN,TN]], alternative="greater") if all(x > 0 for x in  [TP, FP, FN, TN]) else (0, 1)
-        print(f"{overlap} common genes from {k} open target genes and {len(topk_attributed)} attributed genes")
-        print(f"\nRecall: {recall:.3f}, Precision/Novelty: {precision:.3f}, Fisher's Exact p: {pval:.5f}, " 
-              f"Overlap Strength: {sum([opentarget_dict.get(gene) for gene in overlap_genes]):.2f}, Overlap Genes: {sorted(overlap_genes)}")
-        print(f"Candidate novel genes:{attributed_genes.drop(list(overlap_genes)).sort_values(ascending=False).index.tolist()[:3]}")
+        if baseline is None:
+            print(f"{overlap} common genes from {k} open target genes and {len(topk_attributed)} attributed genes")
+            print(f"\nRecall: {recall:.3f}, Precision/Novelty: {precision:.3f}, Fisher's Exact p: {pval:.5f}, " 
+                f"Overlap Strength: {sum([opentarget_dict.get(gene) for gene in overlap_genes]):.2f}, Overlap Genes: {sorted(overlap_genes)}")
+            print(f"Candidate novel genes:{attributed_genes.drop(list(overlap_genes)).sort_values(ascending=False).index.tolist()[:3]}")
         max_overlap = opentarget_genes & set(attributed_genes.index.tolist())
 
-        return recall, precision, pval, sorted(overlap_genes), opentarget_genes, attributed_genes, overlap/len(max_overlap)
+        return opentarget_genes, attributed_genes, overlap/max(len(max_overlap), 1), recall, precision, pval, sorted(overlap_genes)
 
     def baselines(self, phenotype_obs_key='disease', case_label=None, control_label=None, k=50, method_top_attr="Q3", start_with_X=None):
         from scipy.stats import ttest_ind
@@ -270,10 +287,10 @@ class AttributionAnalysis():
             xj_disc = np.digitize(xj, bins, right=True)
             mi_scores.append(mutual_info_score(xj_disc, y_bin))
 
-        print("GWAS baseline:")
+        #print("GWAS baseline:")
         baseline = pd.Series(t_stat, index=[self.ensembl_id_to_gene_name.get(k,k) for k in var_names])
         out_gwas = self.validate_attributions(phenotype_obs_key=phenotype_obs_key, phenotype_obs_value=case_label, baseline=baseline, method_top_attr=method_top_attr, k=k, start_with_top_X_genes=start_with_X)
-        print("Mutual Information baseline:")
+        #print("Mutual Information baseline:")
         baseline = pd.Series(mi_scores, index=[self.ensembl_id_to_gene_name.get(k,k) for k in var_names])
         out_mi = self.validate_attributions(phenotype_obs_key=phenotype_obs_key, phenotype_obs_value=case_label, baseline=baseline, method_top_attr=method_top_attr, k=k, start_with_top_X_genes=start_with_X)
         return out_gwas, out_mi
