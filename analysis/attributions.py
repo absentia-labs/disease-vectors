@@ -34,14 +34,14 @@ class AttributionAnalysis():
     def __call__(self, method='integrated_gradients', data=None):
         if data is None and self.data is None: return print("Missing data")
 
-    def gradients(self, phenotype="disease", reduction_func = None, only_protein_encoding=True, disable_pbar=False):
+    def gradients(self, phenotype="disease", reduction_func = None, only_protein_encoding=True, disable_pbar=False, force_phenotype_value=None):
         # reduction function needs to take a (S, D) matrix and return an (S,) vector. 
         reduction_func = (lambda m: np.linalg.norm(m, axis=1)) if reduction_func is None else reduction_func
         
         cell_attributions = []
         for cell in tqdm(self.data, disable=disable_pbar):
             x = prepare_cell(cell, self.tok)
-            phenotype_value = x['str_labels'][1+self.tok.phenotypic_types.index(phenotype)]
+            phenotype_value = x['str_labels'][1+self.tok.phenotypic_types.index(phenotype)] if force_phenotype_value is None else force_phenotype_value
             x['inputs_embeds'] = self.model.embeddings(x['input_ids'].to(self.device), x['token_type_ids'].to(self.device)).detach().requires_grad_(True)
 
             y = F.softmax(self.model(**{k:v.unsqueeze(0).to(self.device) for k,v in x.items() if k != 'str_labels'}).logits, dim=-1) # (B, S, D)
@@ -70,7 +70,7 @@ class AttributionAnalysis():
         for cell in tqdm(self.data, disable=disable_pbar):
             x = prepare_cell(cell, self.tok); phv = x['str_labels'][1+self.tok.phenotypic_types.index(phenotype)]
             inp = self.model.embeddings(x['input_ids'].to(self.device), x['token_type_ids'].to(self.device)).detach()
-            base = torch.zeros_like(inp).to(self.device); diff = inp-base; grads = torch.zeros_like(inp)
+            base = self.get_padded_baseline(x); diff = inp-base; grads = torch.zeros_like(inp)
             for a in torch.linspace(0,1,steps):
                 scaled = (base+a*diff).detach().requires_grad_(True); feed={k:v.unsqueeze(0).to(self.device) for k,v in x.items() if k!='str_labels'}; feed['inputs_embeds']=scaled.unsqueeze(0)
                 y = F.softmax(self.model(**feed).logits,dim=-1); Ly=y[0,1+self.tok.phenotypic_types.index(phenotype),self.tok.flattened_tokens.index(phv)]; self.model.zero_grad(); Ly.backward(retain_graph=True); grads+=scaled.grad.detach()
@@ -85,6 +85,18 @@ class AttributionAnalysis():
 
         self.cell_attributions_df.columns = pd.Series(self.cell_attributions_df.columns).apply(lambda ensembl: self.ensembl_id_to_gene_name[ensembl])
         return self.cell_attributions_df
+    
+    def get_padded_baseline(self, x):
+        x_baseline = {
+            "input_ids": torch.cat([x['input_ids'][:self.tok.gene_token_type_offset],
+                                     torch.tensor([self.tok.convert_tokens_to_ids(self.tok.pad_token)] * len(x['input_ids'][self.tok.gene_token_type_offset:]),
+                                                   device=x['input_ids'].device, dtype=x['input_ids'].dtype)] ),
+            "token_type_ids": torch.cat([x['token_type_ids'][:self.tok.gene_token_type_offset],
+                                     torch.tensor([0] * len(x['input_ids'][self.tok.gene_token_type_offset:]), 
+                                                  device=x['input_ids'].device, dtype=x['token_type_ids'].dtype)], ),
+        }
+        baseline_input_embeds = self.model.embeddings(x_baseline['input_ids'].to(self.device), x_baseline['token_type_ids'].to(self.device)).detach()
+        return baseline_input_embeds
     
     def disease_vector_ig(self, index_pairs, phenotype="disease", reduction_func=None, only_protein_encoding=True, steps=2, disable_pbar=False):
         reduction_func = (lambda m: np.linalg.norm(m, axis=1)) if reduction_func is None else reduction_func
@@ -106,8 +118,8 @@ class AttributionAnalysis():
             s1, s2 = set(t1), set(t2)
             inter, u1, u2 = list(s1 & s2), list(s1 - s2), list(s2 - s1)
 
-            ids1, tt1, am1 = [m1[t] for t in inter + u1] + [pad_id] * len(u2), inter + u1 + [0] * len(u2), [1] * (len(inter) + len(u1)) + [0] * len(u2)
-            ids2, tt2, am2 = [m2[t] for t in inter] + [pad_id] * len(u1) + [m2[t] for t in u2], inter + [0] * len(u1) + u2 , [1] * len(inter) + [0] * len(u1) + [1] * len(u2)
+            ids1, tt1, am1 = [m1[t] for t in inter + u1] + [pad_id] * len(u2), inter + u1 + [0] * len(u2), [1] * (len(inter) + len(u1)) + [1] * len(u2)
+            ids2, tt2, am2 = [m2[t] for t in inter] + [pad_id] * len(u1) + [m2[t] for t in u2], inter + [0] * len(u1) + u2 , [1] * len(inter) + [1] * len(u1) + [1] * len(u2)
 
             blended_xt = {
                 "input_ids": torch.cat([xt["input_ids"][:offset], torch.tensor(ids1, device=d, dtype=idt)]),
@@ -156,7 +168,7 @@ class AttributionAnalysis():
             x = prepare_cell(cell, self.tok); phv = x['str_labels'][1+self.tok.phenotypic_types.index(phenotype)]
             feed = {k:v.unsqueeze(0).to(self.device) for k,v in x.items() if k!='str_labels'}
             feed['inputs_embeds'] = self.model.embeddings(x['input_ids'].to(self.device), x['token_type_ids'].to(self.device)).detach().requires_grad_(True).unsqueeze(0)
-            base = torch.zeros_like(feed['inputs_embeds']).to(self.device)
+            base = self.get_padded_baseline(x).unsqueeze(0)
 
             class ForwardWrapper(torch.nn.Module):
                 def __init__(sself, model): super().__init__(); sself.model=model
@@ -221,7 +233,6 @@ class AttributionAnalysis():
         if response:
             return {row['target']['approvedSymbol']: row['score'] for row in response['associatedTargets']['rows'][:top]}
         return {}
-
     
     def validate_attributions(self, k=100, method_top_attr = "above_mean", phenotype_obs_key="disease", phenotype_obs_value="normal", baseline=None, 
                               start_with_top_X_genes=None):
@@ -262,7 +273,7 @@ class AttributionAnalysis():
 
         return opentarget_genes, attributed_genes, overlap/max(len(max_overlap), 1), recall, precision, pval, sorted(overlap_genes)
 
-    def baselines(self, phenotype_obs_key='disease', case_label=None, control_label=None, k=50, method_top_attr="Q3", start_with_X=None):
+    def baselines(self, phenotype_obs_key='disease', case_label=None, control_label=None, k=50, method_top_attr="Q3", start_with_X=None, gwas_only=False):
         from scipy.stats import ttest_ind
         from sklearn.metrics import mutual_info_score
         X = self.data.X.toarray()
@@ -278,22 +289,22 @@ class AttributionAnalysis():
         mask_case, mask_ctrl = (y == case_label), (y == control_label)
         Xc, Xn = X[mask_case], X[mask_ctrl]
         t_stat, _ = ttest_ind(Xc, Xn, axis=0, equal_var=False, nan_policy='omit')
+        
+        if not gwas_only:
+            y_bin = np.where(y == case_label, 1, 0)
+            mi_scores = []
+            for j in range(X.shape[1]):
+                xj = np.asarray(X[:, j]).ravel()
+                bins = np.quantile(xj, np.linspace(0, 1, 6))
+                xj_disc = np.digitize(xj, bins, right=True)
+                mi_scores.append(mutual_info_score(xj_disc, y_bin))
 
-        y_bin = np.where(y == case_label, 1, 0)
-        mi_scores = []
-        for j in range(X.shape[1]):
-            xj = np.asarray(X[:, j]).ravel()
-            bins = np.quantile(xj, np.linspace(0, 1, 6))
-            xj_disc = np.digitize(xj, bins, right=True)
-            mi_scores.append(mutual_info_score(xj_disc, y_bin))
-
-        #print("GWAS baseline:")
-        baseline = pd.Series(t_stat, index=[self.ensembl_id_to_gene_name.get(k,k) for k in var_names])
-        out_gwas = self.validate_attributions(phenotype_obs_key=phenotype_obs_key, phenotype_obs_value=case_label, baseline=baseline, method_top_attr=method_top_attr, k=k, start_with_top_X_genes=start_with_X)
-        #print("Mutual Information baseline:")
-        baseline = pd.Series(mi_scores, index=[self.ensembl_id_to_gene_name.get(k,k) for k in var_names])
-        out_mi = self.validate_attributions(phenotype_obs_key=phenotype_obs_key, phenotype_obs_value=case_label, baseline=baseline, method_top_attr=method_top_attr, k=k, start_with_top_X_genes=start_with_X)
-        return out_gwas, out_mi
+        baseline_gwas = pd.Series(t_stat, index=[self.ensembl_id_to_gene_name.get(k,k) for k in var_names])
+        out_gwas = self.validate_attributions(phenotype_obs_key=phenotype_obs_key, phenotype_obs_value=case_label, baseline=baseline_gwas, method_top_attr=method_top_attr, k=k, start_with_top_X_genes=start_with_X)
+        if gwas_only: return out_gwas, baseline_gwas
+        baseline_mi = pd.Series(mi_scores, index=[self.ensembl_id_to_gene_name.get(k,k) for k in var_names])
+        out_mi = self.validate_attributions(phenotype_obs_key=phenotype_obs_key, phenotype_obs_value=case_label, baseline=baseline_mi, method_top_attr=method_top_attr, k=k, start_with_top_X_genes=start_with_X)
+        return out_gwas, baseline_gwas, out_mi, baseline_mi
 
 if __name__== "__main__":
 
