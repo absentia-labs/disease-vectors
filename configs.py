@@ -23,6 +23,8 @@ class BaseConfig:
     sparse:bool
     classification_token:bool
     seed:int
+    monitor_collapse:bool
+    compound_loss:bool
 
     vocab_path: str
     obs_included_phenotypes: list[str]
@@ -112,6 +114,10 @@ def parse_args(args: list[str] = None) -> BaseConfig:
     parser.add_argument("--sparse", action="store_true", help="drop 0 expression genes or always have top max length highly variable genes in order")
     parser.add_argument("--seed", type=int, help="seed to set all random generators to", default=42)
 
+    # Neural Collapse Parameters
+    parser.add_argument("--monitor_collapse", action="store_true")
+    parser.add_argument("--compound_loss", action="store_true")
+
     mlm_subparser.add_argument("--train_data_paths", nargs="+", type=str, help="One or more (possible `braceexpand`-able) paths to training h5ad file(s).")
     mlm_subparser.add_argument("--num_train_epochs", type=int, required=True)
     mlm_subparser.add_argument("--per_device_train_batch_size", type=int, required=True)
@@ -120,7 +126,7 @@ def parse_args(args: list[str] = None) -> BaseConfig:
     mlm_subparser.add_argument("--weight_decay", type=float, required=True)
     mlm_subparser.add_argument("--warmup_ratio", default=0.0, type=float)
     mlm_subparser.add_argument("--save_steps", type=int, required=True)
-    mlm_subparser.add_argument("--num_saves", type=int, default=25, help="number of check points to save before overwriting oldest one")
+    mlm_subparser.add_argument("--num_saves", type=int, default=500, help="number of check points to save before overwriting oldest one")
     mlm_subparser.add_argument("--eval_steps", type=int, required=True)
     mlm_subparser.add_argument("--best_metric", type=str, default="overall_f1", help="best metric to choose final model")
 

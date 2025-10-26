@@ -78,7 +78,7 @@ if __name__ == "__main__":
     train_dataset = IterableAnnDataset(process_train_paths, config, tokenizer)
 
     eval_dataset = IterableAnnDataset(config.eval_data_paths, config, tokenizer)
-    eval_metric = metrics_wrapper(model, tokenizer)
+    #eval_metric = metrics_wrapper(model, tokenizer)
 
     # TODO: shuffle train, add shard_sizes arg, diff shard_size for eval
 
@@ -130,8 +130,11 @@ if __name__ == "__main__":
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
         data_collator=data_collator,
-        compute_metrics=eval_metric,
-        preprocess_logits_for_metrics=preprocess_logits_argmax,
+        #compute_metrics=eval_metric,
+        #preprocess_logits_for_metrics=preprocess_logits_argmax,
+        compound_loss = config.compound_loss,
+        monitor_collapse = config.monitor_collapse,
+        tokenizer=tokenizer,
     )
 
     # Train the model

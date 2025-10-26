@@ -1,100 +1,16 @@
 import numpy as np
 import pandas as pd
 import torch
+from sklearn.metrics import accuracy_score, precision_score, recall_score, confusion_matrix
 import transformers
 from polygene.data_utils.tokenization import GeneTokenizer
 from polygene.model.model import Polygene
-from sklearn.metrics import accuracy_score, precision_score, recall_score, confusion_matrix
 
 
 def set_seed(seed):
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
     transformers.set_seed(seed)
-
-
-def preprocess_logits_argmax(logits, labels):
-    """
-    We currently only need the top predicted class instead of all the logits,
-    so this preprocessing saves significant memory.
-    """
-    if isinstance(logits, tuple):
-        # should not happen for `GeneBert` variants, but other models may have extra tensors like `past_key_values`
-        logits = logits[0]
-
-    return logits.argmax(dim=-1) # We could temperature here too
-
-
-def classification_metrics(flat_preds: np.ndarray, flat_labels: np.ndarray) -> dict[str, float]:
-    """
-    Args:
-        flat_preds: Flat numpy array of predictions (argmax of logits)
-        flat_labels: Flat numpy array of labels, with the same shape as `flat_preds`
-        Note that it is assumed that the labels corresponding to -100 have already been filtered out.
-
-    Returns:
-        Dictionary of different metric values ("accuracy", "precision", "recall", "f1").
-
-    Note: Setting `average='macro'` for macro-average (average over classes)
-    Using `zero_division=0` to handle cases where there are no true or predicted samples for a class
-    """
-
-    metrics = {
-        "accuracy": accuracy_score(flat_labels, flat_preds),
-        #"recall": recall_score(flat_labels, flat_preds, average='macro', zero_division=0),
-        #"precision": precision_score(flat_labels, flat_preds, average='macro', zero_division=0),
-    }
-    r = recall_score(flat_labels, flat_preds, average='macro', zero_division=0)
-    p = precision_score(flat_labels, flat_preds, average='macro', zero_division=0)
-    metrics["f1"] = 2 / ((1 / r) + (1 / p)) \
-          if r > 0 and p > 0 else 0
-    return metrics
-
-
-def metrics_wrapper(model:Polygene, tokenizer: GeneTokenizer):
-
-    def compute_metrics(p: transformers.EvalPrediction):
-        """
-        Computes MLM accuracy from EvalPrediction object.
-
-        Args:
-            - p (EvalPrediction): An object containing the predictions and labels.
-
-        Returns:
-            - dict: A dictionary containing the accuracy under the key 'accuracy'.
-        """
-        tokenizer.sync(model.config.updates_memory, num=model.config.vocab_size - len(model.config.updates_memory['token_value_str']))
-        metrics = {}
-
-        # Extract predictions and labels from the EvalPrediction object
-        predictions = p.predictions # (B, S) argmax from preprocess_logits
-        labels = p.label_ids # (B, S)  B = shard size/ eval set size, S = max sequence length, filled with token IDs
-        inputs = p.inputs
-
-        # Ignoring -100 used for non-masked tokens (pad, cls, eos tokens)
-        mask_token_id = tokenizer.convert_tokens_to_ids(tokenizer.mask_token)
-        mask = inputs == mask_token_id
-        overall_metrics = classification_metrics(predictions[mask], labels[mask]) # global masks flatten the array
-
-        metrics.update({f"overall_{metric_name}": metric_val for metric_name, metric_val in overall_metrics.items()})
-
-        # Compute metrics per phenotype type aka per token sequence column
-        for i, phenotypic_type in enumerate(tokenizer.phenotypic_types):
-            y_pred, y, x = predictions[:, i + 1], labels[:, i + 1], inputs[:, i+1] # What happens to the phenotype dropping in collator?
-            mask = x == mask_token_id
-            if len(y[mask]):
-                phenotype_metrics = classification_metrics(y_pred[mask], y[mask])
-                metrics.update({f"{phenotypic_type}_{key}": value for key, value in phenotype_metrics.items()})
-
-        # Metrics for genotype expression predictions (maybe only if theres gene masking)
-        y_pred, y, x = predictions[:, tokenizer.gene_token_type_offset:], labels[:, tokenizer.gene_token_type_offset:], inputs[:, tokenizer.gene_token_type_offset:]
-        mask = x == mask_token_id
-        gene_metrics = classification_metrics(y_pred[mask], y[mask])
-        metrics.update({f"Genotype_{key}": value for key, value in gene_metrics.items()})
-
-        return metrics
-
-    return compute_metrics
 
 from typing import Callable
 

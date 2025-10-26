@@ -103,24 +103,27 @@ class Polygene(transformers.DistilBertPreTrainedModel):
         super().__init__(config)
 
         self.mlm_loss_fct = nn.CrossEntropyLoss(label_smoothing=0.25)
+
+
         if not hasattr(config, "updates_memory") or config.updates_memory is None: # Load in the checkpoint version
             config.updates_memory = {
                 "token_values": [],
                 "token_value_str": [],
                 "token_type_of_values": [],
             }
-
+        
         self.embeddings = PositionlessEmbeddings(config)  # changed to `PositionlessEmbeddings`
         self.transformer = transformers.models.distilbert.modeling_distilbert.Transformer(config)  # encoder
         self._use_flash_attention_2 = config._attn_implementation == "flash_attention_2"
 
         if not self.config.classification_token:
-            self.prediction_head = nn.Sequential(
-                nn.Linear(config.dim, config.dim),
-                get_activation(config.activation),
+            if not hasattr(self.config, "head_hidden_layers"): # error handling for different versions of the class
+                self.config.head_hidden_layers = 1
+            head_layers = [layer for _ in range(self.config.head_hidden_layers) for layer in (nn.Linear(config.dim, config.dim), get_activation(config.activation))]
+            self.prediction_head = nn.Sequential(*(head_layers + [
                 nn.LayerNorm(config.dim, eps=1e-12),
                 nn.Linear(config.dim, config.vocab_size),
-            )
+            ]))
         else:
             self.prediction_head = MultiPredictionHead(config, config.obs_included_phenotypes, config.phenotypic_tokens_map, config.n_bins, self.mlm_loss_fct)
 
@@ -174,7 +177,7 @@ class Polygene(transformers.DistilBertPreTrainedModel):
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
         )
-        hidden_state_embeddings = distilbert_output[0] # (B, S, D)
+        hidden_state_embeddings = distilbert_output[0] / (torch.linalg.norm(distilbert_output[0],dim=-1, keepdim=True) + 1e-12) # (B, S, D)
 
         if not self.config.classification_token:
             prediction_logits = self.prediction_head(hidden_state_embeddings) # (B, S, V), V for vocabulary size
