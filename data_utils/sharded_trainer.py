@@ -22,9 +22,11 @@ class ShardedTrainer(transformers.Trainer):
 
         self.compound_loss = compound_loss
         self.tokenizer = tokenizer
-        self.update_every = 100
+        self.update_every = 20
         self.train_step = 0
-        self.buffer = defaultdict(deque(maxlen=50))
+        self.buffer = defaultdict(lambda: deque(maxlen=50))
+        self.compute_metrics = self._compute_metrics
+        self.preprocess_logits_for_metrics = self._preprocess_logits_argmax
 
 
     def get_train_dataloader(self) -> torch.utils.data.DataLoader:
@@ -60,19 +62,53 @@ class ShardedTrainer(transformers.Trainer):
 
     def get_eval_dataloader(self, eval_dataset: Optional[Dataset] = None) -> DataLoader:
         """
-        Copied from `Trainer.get_eval_dataloader()`.
-        Specifically for `eval_dataset`, `EvalJsonDataset` will default to `Trainer.get_eval_dataloader()` otherwise.
-
-        Changing `data_collator` from `self.data_collator` to `collate_fn_wrapper` (i.e. still pad but no masking),
-        because masking (if relevant) is already in eval_dataset.
-        This change enables deterministic evaluation ("static masking").
+        copied from train dataloader 
         """
         if eval_dataset is None and self.eval_dataset is None:
             raise ValueError("Trainer: evaluation requires an eval_dataset.")
-
         eval_dataset = eval_dataset if eval_dataset is not None else self.eval_dataset
 
-        return super().get_eval_dataloader(eval_dataset)
+        data_collator = self.data_collator
+        if transformers.is_datasets_available() and isinstance(eval_dataset, datasets.Dataset):
+            eval_dataset = self._remove_unused_columns(eval_dataset, description="evaluation")
+        else:
+            data_collator = self._get_collator_with_removed_columns(data_collator, description="evaluation")
+
+        dataloader_params = {
+            "batch_size": self.args.eval_batch_size,
+            "collate_fn": data_collator,
+            "num_workers": 1, #self.args.dataloader_num_workers,
+            "pin_memory": self.args.dataloader_pin_memory,
+            "persistent_workers": self.args.dataloader_persistent_workers,
+            "shuffle": False,
+            "drop_last": False,
+        }
+
+        return DataLoader(eval_dataset, **dataloader_params)
+
+    def _maybe_log_save_evaluate(self, tr_loss, grad_norm, model, trial, epoch, ignore_keys_for_eval):
+        step = self.state.global_step
+
+        if self.control.should_log and step > self._globalstep_last_logged:
+            tr_loss_scalar = self._nested_gather(tr_loss).mean().item()
+            tr_loss -= tr_loss
+            logs = {
+                "loss": round(tr_loss_scalar / (step - self._globalstep_last_logged), 4),
+                "learning_rate": self._get_learning_rate(),
+            }
+            if grad_norm is not None:
+                logs["grad_norm"] = grad_norm.detach().item() if isinstance(grad_norm, torch.Tensor) else grad_norm
+            self._total_loss_scalar += tr_loss_scalar
+            self._globalstep_last_logged = step
+            self.store_flos()
+            self.log(logs)
+        
+        logscale_checkpoints = (np.logspace(5, 7, num=10, base=10)/self.args.train_batch_size).astype(int).tolist()
+        if step in logscale_checkpoints or (step > logscale_checkpoints[-1] and step % self.args.save_steps == 0):
+                metrics = self.evaluate(ignore_keys=ignore_keys_for_eval)
+                self.log(metrics)
+                self._save_checkpoint(model, trial, metrics=metrics)
+                self.control = self.callback_handler.on_save(self.args, self.state, self.control)
 
     def compute_loss(
         self,
@@ -83,21 +119,23 @@ class ShardedTrainer(transformers.Trainer):
     ):
         outputs = model(**inputs)
         loss = outputs.loss
-        
+
+        if self.compound_loss and self.train_step > int(1e3) and self.train_step % self.update_every == 0:
+            all_embeddings = [torch.stack(list(dq)) for dq in self.buffer.values() if len(dq) > 0]
+            history_Z = torch.cat(all_embeddings, dim=0)  # (K, D)
+            current_Z = outputs.hidden_states[:, 1 + self.tokenizer.phenotypic_types.index("disease")]
+            Z = torch.cat([current_Z, history_Z])
+            v_disease = torch.mean(torch.clamp(1 -  torch.std(Z, dim=0), min=0.0).pow(2))
+            l_uniform = torch.log(torch.exp(-torch.cdist(current_Z, Z.detach(), p=2).pow(2)).mean())
+            loss = loss + 1e-2 * v_disease + 1e-3 * l_uniform
+
+        self.train_step += 1
+
         if self.monitor_collapse:
             x = inputs['input_ids'][:, 1 + self.tokenizer.phenotypic_types.index("disease")] # (B, S)[:, idx]
             z = outputs.hidden_states[:, 1 + self.tokenizer.phenotypic_types.index("disease")] # (B, S, D)[:, idx]
             for index, vector in zip(x.tolist(), z):
-                self.buffer[index].append(vector)
-
-        if self.compound_loss and self.train_step > int(1e4) and self.train_step % self.update_every == 0:
-            all_embeddings = [torch.stack(list(dq)) for dq in self.buffer.values() if len(dq) > 0]
-            Z = torch.cat(all_embeddings, dim=0)  # (K, D)
-            v_disease = torch.mean(torch.clamp(1 -  torch.std(Z, dim=0), min=0.0).pow(2))
-            l_uniform = torch.log(torch.exp(-torch.cdist(Z, Z, p=2).pow(2)).mean())
-            loss = loss + 1e-2 * v_disease + 1e-3 * l_uniform
-
-        self.train_step += 1
+                self.buffer[index].append(vector.detach().clone())
         return (loss, outputs) if return_outputs else loss
 
 
@@ -108,7 +146,7 @@ class ShardedTrainer(transformers.Trainer):
                 size += len(batch)
         return size
 
-    def compute_metrics(self, p: transformers.EvalPrediction):
+    def _compute_metrics(self, p: transformers.EvalPrediction):
         """
         Computes MLM accuracy from EvalPrediction object.
 
@@ -171,7 +209,7 @@ class ShardedTrainer(transformers.Trainer):
 
         return np.log(float(NC1)), float(NC2)
 
-    def preprocess_logits_argmax(logits, labels):
+    def _preprocess_logits_argmax(self, logits, labels):
         """
         We currently only need the top predicted class instead of all the logits,
         so this preprocessing saves significant memory.

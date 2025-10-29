@@ -275,3 +275,6 @@ class GeneTokenizer:
                                         updates_memory['token_value_str']):
             self.token_to_id_map[token_str] = token_id
             self.flattened_tokens.append(token_str)
+
+    def save_pretrained(self, output_dir):
+        pass

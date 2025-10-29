@@ -17,7 +17,7 @@ from polygene.configs import parse_args, TrainConfig
 from polygene.data_utils import (
     DataCollatorForPhenotypicMLM, GeneTokenizer, IterableAnnDataset
 )
-from polygene.eval.metrics import preprocess_logits_argmax, metrics_wrapper, set_seed
+from polygene.eval.metrics import set_seed
 from polygene.model.model import Polygene
 from polygene.data_utils.sharded_trainer import ShardedTrainer
 
@@ -98,7 +98,7 @@ if __name__ == "__main__":
         save_steps=config.save_steps,
         run_name=working_dir.split('/')[-1],
         report_to=["wandb"],
-        load_best_model_at_end=True,
+        load_best_model_at_end=False,
 
         # training stability parameters
         warmup_ratio=config.warmup_ratio,
