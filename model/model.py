@@ -177,7 +177,7 @@ class Polygene(transformers.DistilBertPreTrainedModel):
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
         )
-        hidden_state_embeddings = distilbert_output[0] / (torch.linalg.norm(distilbert_output[0],dim=-1, keepdim=True) + 1e-12) # (B, S, D)
+        hidden_state_embeddings = distilbert_output[0] #/ (torch.linalg.norm(distilbert_output[0],dim=-1, keepdim=True) + 1e-12) # (B, S, D)
 
         if not self.config.classification_token:
             prediction_logits = self.prediction_head(hidden_state_embeddings) # (B, S, V), V for vocabulary size

@@ -14,9 +14,11 @@ EMBEDDINGS_DIR = '/media/lleger/LaCie/mit/disease_vector/vector_data/'
 mod, tok = load_trained_model("../../../runs/gesam_polygene_run_4/")
 decoder = mod.prediction_head
 
-n_grad = 50
-surround_border = 10
-eps=1e-2
+
+n_grad = 30
+surround_border = 2
+stabilizing_eps = 1e-6  # stabilizing coefficient pulling the metric toward the Euclidean identity
+
 torch.manual_seed(3)
 
 device = "cuda:0"
@@ -73,6 +75,7 @@ def curvature_tensors(metric, levi_civita_p, levi_civita_q, levi_civita_r, eps):
     ricci_tensor = term1 - term2 + term3 - term4
     inverse_metric = cho_solve(cho_factor(metric), np.eye(metric.shape[0]))
     scalar_curvature = np.einsum('ij,ij->', inverse_metric, ricci_tensor)
+    # directional derivative approximation of Ricci tensor. 
     return scalar_curvature # Discrete Riemannian Curvature on a Statistical manifold. 
 
 
@@ -82,7 +85,7 @@ for file_path in os.listdir(EMBEDDINGS_DIR):
     df = pd.DataFrame({'embedding': saved_embeddings[0].tolist()} | {tok.phenotypic_types[i]: saved_embeddings[2][:, i] for i in range(len(tok.phenotypic_types))})
     disease_list = sorted(df['disease'].unique().tolist(), key=lambda x: 0 if 'normal' in x else 1) 
 
-    proj = PCA(2)
+    proj = PCA(2, whiten=True, svd_solver='full')
     df[['x', 'y']] = proj.fit_transform(np.array(df['embedding'].tolist())).tolist()
     explained_var = proj.explained_variance_ratio_.copy()
 
@@ -131,6 +134,7 @@ for file_path in os.listdir(EMBEDDINGS_DIR):
         amari_chentsov_tensor = skewness_tensor(z, decoder)
 
         # RC tensor approximation in infinitessimal rectangle
+        eps = 1e-3
         levi_civita_connection_q = christoffel_symbols(riemannian_metric, z + eps*torch.randn_like(z, device=device), decoder)
         levi_civita_connection_r = christoffel_symbols(riemannian_metric, z + eps*torch.randn_like(z, device=device), decoder)
         curvature = curvature_tensors(G, levi_civita_connection, levi_civita_connection_q, levi_civita_connection_r, eps)

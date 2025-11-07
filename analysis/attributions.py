@@ -235,9 +235,9 @@ class AttributionAnalysis():
         return {}
     
     def validate_attributions(self, k=100, method_top_attr = "above_mean", phenotype_obs_key="disease", phenotype_obs_value="normal", baseline=None, 
-                              start_with_top_X_genes=None):
+                              start_with_top_X_genes=None, overwrite_ontology_id=None):
         # assuming all cells are part of same phenotype
-        ontology_id = self.data.obs[self.data.obs[phenotype_obs_key] == phenotype_obs_value]['disease_ontology_term_id'].tolist()[0]
+        ontology_id = self.data.obs[self.data.obs[phenotype_obs_key] == phenotype_obs_value]['disease_ontology_term_id'].tolist()[0] if overwrite_ontology_id is None else overwrite_ontology_id
         attributed_genes = self.cell_attributions_df.loc[(self.data.obs[phenotype_obs_key] == phenotype_obs_value).tolist(),:].sum(axis=0) if baseline is None else baseline
         if start_with_top_X_genes is not None: attributed_genes = attributed_genes.sort_values(ascending=False)[:start_with_top_X_genes]
         
@@ -264,6 +264,7 @@ class AttributionAnalysis():
         recall = TP / (TP + FN) if (TP + FN) > 0 else 0
         precision = TP / (TP + FP) if (TP + FP) > 0 else 0
         odds, pval = fisher_exact([[TP,FP],[FN,TN]], alternative="greater") if all(x > 0 for x in  [TP, FP, FN, TN]) else (0, 1)
+        candidate_genes = attributed_genes.drop(list(overlap_genes)).sort_values(ascending=False).index.tolist()[:3]
         if baseline is None:
             print(f"{overlap} common genes from {k} open target genes and {len(topk_attributed)} attributed genes")
             print(f"\nRecall: {recall:.3f}, Precision/Novelty: {precision:.3f}, Fisher's Exact p: {pval:.5f}, " 
@@ -271,7 +272,7 @@ class AttributionAnalysis():
             print(f"Candidate novel genes:{attributed_genes.drop(list(overlap_genes)).sort_values(ascending=False).index.tolist()[:3]}")
         max_overlap = opentarget_genes & set(attributed_genes.index.tolist())
 
-        return opentarget_genes, attributed_genes, overlap/max(len(max_overlap), 1), recall, precision, pval, sorted(overlap_genes)
+        return opentarget_genes, attributed_genes, overlap/max(len(max_overlap), 1), recall, precision, pval, (sorted(overlap_genes), candidate_genes)
 
     def baselines(self, phenotype_obs_key='disease', case_label=None, control_label=None, k=50, method_top_attr="Q3", start_with_X=None, gwas_only=False):
         from scipy.stats import ttest_ind
