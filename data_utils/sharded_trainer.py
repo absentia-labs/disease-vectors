@@ -1,33 +1,30 @@
 from typing import Optional
 
-import datasets
+import numpy as np
+import pandas as pd
 import torch
+import datasets
 import transformers
 from torch.utils.data import Dataset, DataLoader
 from collections import deque, defaultdict
 from polygene.data_utils.tokenization import GeneTokenizer
-import numpy as np
-import pandas as pd
-import torch
-from sklearn.metrics import accuracy_score, precision_score, recall_score, confusion_matrix
+from sklearn.metrics import accuracy_score, precision_score, recall_score
 
 class ShardedTrainer(transformers.Trainer):
     """
     Modified Trainer for our use case of distributed training on multiple GPUs with a sharded IterableDataset.
     Instead of loading all batches on GPU 0 and dispatching the batches to other GPUs, each GPU loads its own batches.
     """
-    def __init__(self, *args, compound_loss = None, monitor_collapse = None, tokenizer: GeneTokenizer = None, **kwargs):
+    def __init__(self, *args, tokenizer: GeneTokenizer = None, **kwargs):
         super().__init__(*args, **kwargs)
-        self.monitor_collapse = monitor_collapse
 
-        self.compound_loss = compound_loss
         self.tokenizer = tokenizer
-        self.update_every = 20
-        self.train_step = 0
-        self.buffer = defaultdict(lambda: deque(maxlen=50))
         self.compute_metrics = self._compute_metrics
         self.preprocess_logits_for_metrics = self._preprocess_logits_argmax
-
+        
+        #self.buffer = defaultdict(lambda: deque(maxlen=50))
+        #self.monitor_collapse = monitor_collapse
+        #self.compound_loss = compound_loss
 
     def get_train_dataloader(self) -> torch.utils.data.DataLoader:
         """
@@ -110,42 +107,6 @@ class ShardedTrainer(transformers.Trainer):
                 self._save_checkpoint(model, trial, metrics=metrics)
                 self.control = self.callback_handler.on_save(self.args, self.state, self.control)
 
-    def compute_loss(
-        self,
-        model,
-        inputs,
-        return_outputs = False,
-        num_items_in_batch = None,
-    ):
-        outputs = model(**inputs)
-        loss = outputs.loss
-
-        if self.compound_loss and self.train_step > int(1e3) and self.train_step % self.update_every == 0:
-            all_embeddings = [torch.stack(list(dq)) for dq in self.buffer.values() if len(dq) > 0]
-            history_Z = torch.cat(all_embeddings, dim=0)  # (K, D)
-            current_Z = outputs.hidden_states[:, 1 + self.tokenizer.phenotypic_types.index("disease")]
-            Z = torch.cat([current_Z, history_Z])
-            v_disease = torch.mean(torch.clamp(1 -  torch.std(Z, dim=0), min=0.0).pow(2))
-            l_uniform = torch.log(torch.exp(-torch.cdist(current_Z, Z.detach(), p=2).pow(2)).mean())
-            loss = loss + 1e-2 * v_disease + 1e-3 * l_uniform
-
-        self.train_step += 1
-
-        if self.monitor_collapse:
-            x = inputs['input_ids'][:, 1 + self.tokenizer.phenotypic_types.index("disease")] # (B, S)[:, idx]
-            z = outputs.hidden_states[:, 1 + self.tokenizer.phenotypic_types.index("disease")] # (B, S, D)[:, idx]
-            for index, vector in zip(x.tolist(), z):
-                self.buffer[index].append(vector.detach().clone())
-        return (loss, outputs) if return_outputs else loss
-
-
-    def buffer_length(self):
-        size = 0
-        for key in self.buffer:
-            for batch in self.buffer[key]:
-                size += len(batch)
-        return size
-
     def _compute_metrics(self, p: transformers.EvalPrediction):
         """
         Computes MLM accuracy from EvalPrediction object.
@@ -162,53 +123,35 @@ class ShardedTrainer(transformers.Trainer):
         # Extract predictions and labels from the EvalPrediction object
         predictions = p.predictions # (B, S) argmax from preprocess_logits
         labels = p.label_ids # (B, S)  B = shard size/ eval set size, S = max sequence length, filled with token IDs
-        inputs = p.inputs
+        #inputs = p.inputs
 
         # Ignoring -100 used for non-masked tokens (pad, cls, eos tokens)
         mask_token_id = self.tokenizer.convert_tokens_to_ids(self.tokenizer.mask_token)
-        mask = inputs == mask_token_id
+        mask = labels != -100
         overall_metrics = classification_metrics(predictions[mask], labels[mask]) # global masks flatten the array
 
         metrics.update({f"overall_{metric_name}": metric_val for metric_name, metric_val in overall_metrics.items()})
 
         # Compute metrics per phenotype type aka per token sequence column
         for i, phenotypic_type in enumerate(self.tokenizer.phenotypic_types):
-            y_pred, y, x = predictions[:, i + 1], labels[:, i + 1], inputs[:, i+1] # What happens to the phenotype dropping in collator?
-            mask = x == mask_token_id
+            y_pred, y = predictions[:, i + 1], labels[:, i + 1]
+            mask = y != -100
             if len(y[mask]):
                 phenotype_metrics = classification_metrics(y_pred[mask], y[mask])
                 metrics.update({f"{phenotypic_type}_{key}": value for key, value in phenotype_metrics.items()})
 
         # Metrics for genotype expression predictions (maybe only if theres gene masking)
-        y_pred, y, x = predictions[:, self.tokenizer.gene_token_type_offset:], labels[:, self.tokenizer.gene_token_type_offset:], inputs[:, self.tokenizer.gene_token_type_offset:]
-        mask = x == mask_token_id
-        gene_metrics = classification_metrics(y_pred[mask], y[mask])
-        metrics.update({f"Genotype_{key}": value for key, value in gene_metrics.items()})
+        y_pred, y = predictions[:, self.tokenizer.gene_token_type_offset:], labels[:, self.tokenizer.gene_token_type_offset:]
+        mask = y != -100
+        if len(y[mask]):
+            gene_metrics = classification_metrics(y_pred[mask], y[mask])
+            metrics.update({f"Genotype_{key}": value for key, value in gene_metrics.items()})
 
-        NC1, NC2 = self.neural_collapse_metrics()
-        metrics["NC1"] = NC1
-        metrics["NC2"] = NC2
+        # Metrics to quantify feature collapse
+        #NC1, NC2 = self.neural_collapse_metrics()
+        #metrics["NC1"] = NC1; metrics["NC2"] = NC2
         return metrics
     
-    def neural_collapse_metrics(self):
-        records = [{"disease": disease_id, "embedding": embedding.detach().cpu().numpy()} for disease_id, dq in self.buffer.items() for embedding in dq ]
-        df = pd.DataFrame(records)
-        K = len(df["disease"].unique())
-        stats_df = df.groupby("disease").apply( lambda g: pd.Series({
-                                                    "mean": np.array(g["embedding"].tolist()).mean(axis=0),
-                                                    "covar": np.cov(np.array(g["embedding"].tolist()).T, bias=True) })).reset_index()
-
-        covariance_K = np.array(stats_df["covar"].tolist()).mean(axis=0)
-        covariance_G = np.cov(np.array(stats_df["mean"].tolist()).T, bias=True)
-        NC1 = (1 / K) * np.trace(covariance_K @ np.linalg.pinv(covariance_G))
-
-        means = np.array(stats_df["mean"].tolist()) - np.array(stats_df["mean"].tolist()).mean(axis=0)
-        M = means / np.linalg.norm(means, axis=1, keepdims=True)
-        MMT = M @ M.T
-        NC2 = np.linalg.norm(MMT / np.linalg.norm(MMT, "fro") - (1 / np.sqrt(K - 1)) * (np.eye(K) - (1 / K) * np.ones((K, K))), "fro")
-
-        return np.log(float(NC1)), float(NC2)
-
     def _preprocess_logits_argmax(self, logits, labels):
         """
         We currently only need the top predicted class instead of all the logits,
@@ -234,13 +177,66 @@ def classification_metrics(flat_preds: np.ndarray, flat_labels: np.ndarray) -> d
         Using `zero_division=0` to handle cases where there are no true or predicted samples for a class
         """
 
-        metrics = {
-            "accuracy": accuracy_score(flat_labels, flat_preds),
-            #"recall": recall_score(flat_labels, flat_preds, average='macro', zero_division=0),
-            #"precision": precision_score(flat_labels, flat_preds, average='macro', zero_division=0),
-        }
         r = recall_score(flat_labels, flat_preds, average='macro', zero_division=0)
         p = precision_score(flat_labels, flat_preds, average='macro', zero_division=0)
-        metrics["f1"] = 2 / ((1 / r) + (1 / p)) \
-            if r > 0 and p > 0 else 0
-        return metrics
+        return {
+            "accuracy": accuracy_score(flat_labels, flat_preds),
+            "f1":  2 / ((1 / r) + (1 / p)) if r > 0 and p > 0 else 0
+        }
+
+# Potential fix, compound loss function to mitigate feature collapse.
+# 
+#def compute_loss(
+#    self,
+#    model,
+#    inputs,
+#    return_outputs = False,
+#    num_items_in_batch = None,
+#):
+#    outputs = model(**inputs)
+#    loss = outputs.loss
+#
+#    if self.compound_loss and self.train_step > int(1e3) and self.train_step % self.update_every == 0:
+#        all_embeddings = [torch.stack(list(dq)) for dq in self.buffer.values() if len(dq) > 0]
+#        history_Z = torch.cat(all_embeddings, dim=0)  # (K, D)
+#        current_Z = outputs.hidden_states[:, 1 + self.tokenizer.phenotypic_types.index("disease")]
+#        Z = torch.cat([current_Z, history_Z])
+#        v_disease = torch.mean(torch.clamp(1 -  torch.std(Z, dim=0), min=0.0).pow(2))
+#        l_uniform = torch.log(torch.exp(-torch.cdist(current_Z, Z.detach(), p=2).pow(2)).mean())
+#        loss = loss + 1e-2 * v_disease + 1e-3 * l_uniform
+#
+#    self.train_step += 1
+#
+#    if self.monitor_collapse:
+#        x = inputs['input_ids'][:, 1 + self.tokenizer.phenotypic_types.index("disease")] # (B, S)[:, idx]
+#        z = outputs.hidden_states[:, 1 + self.tokenizer.phenotypic_types.index("disease")] # (B, S, D)[:, idx]
+#        for index, vector in zip(x.tolist(), z):
+#            self.buffer[index].append(vector.detach().clone())
+#    return (loss, outputs) if return_outputs else loss
+
+#    def buffer_length(self):
+#        size = 0
+#        for key in self.buffer:
+#            for batch in self.buffer[key]:
+#                size += len(batch)
+#        return size
+
+#    def neural_collapse_metrics(self):
+#        records = [{"disease": disease_id, "embedding": embedding.detach().cpu().numpy()} for disease_id, dq in self.buffer.items() for embedding in dq ]
+#        df = pd.DataFrame(records)
+#        K = len(df["disease"].unique())
+#        stats_df = df.groupby("disease").apply( lambda g: pd.Series({
+#                                                    "mean": np.array(g["embedding"].tolist()).mean(axis=0),
+#                                                    "covar": np.cov(np.array(g["embedding"].tolist()).T, bias=True) })).reset_index()
+#
+#        covariance_K = np.array(stats_df["covar"].tolist()).mean(axis=0)
+#        covariance_G = np.cov(np.array(stats_df["mean"].tolist()).T, bias=True)
+#        NC1 = (1 / K) * np.trace(covariance_K @ np.linalg.pinv(covariance_G))
+#
+#        means = np.array(stats_df["mean"].tolist()) - np.array(stats_df["mean"].tolist()).mean(axis=0)
+#        M = means / np.linalg.norm(means, axis=1, keepdims=True)
+#        MMT = M @ M.T
+#        NC2 = np.linalg.norm(MMT / np.linalg.norm(MMT, "fro") - (1 / np.sqrt(K - 1)) * (np.eye(K) - (1 / K) * np.ones((K, K))), "fro")
+#
+#        return np.log(float(NC1)), float(NC2)
+

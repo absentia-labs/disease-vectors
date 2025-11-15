@@ -153,5 +153,5 @@ for file_path in os.listdir(EMBEDDINGS_DIR):
     
     results["geometrical_stats"] = pd.DataFrame(information_geometry_stats)
 
-    pd.to_pickle(results, EMBEDDINGS_DIR + file_path.split('_embeddings')[0]+ "_geometrical_stats.pkl")
+    pd.to_pickle(results, EMBEDDINGS_DIR + file_path.split('_embeddings')[0]+ "_geom2_stats.pkl")
     

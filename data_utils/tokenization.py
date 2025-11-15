@@ -54,17 +54,14 @@ class GeneTokenizer:
         self.flattened_tokens.extend(_prepend_bin(np.arange(self.num_bins + 1)).tolist())  # Important! - breaking backwards compatability by adding bin_0
         self.token_to_id_map = {token: i for i, token in enumerate(self.flattened_tokens)}
 
-        # keep a genotype map because HVG ranks are inconsistent between datasets, oh lord
-        with open("polygene/data_utils/vocab/gene_ranking_map.json", "r") as f: #TODO path as argument
+        # keep a genotype map because HVG ranks are inconsistent between datasets
+        with open("polygene/data_utils/vocab/gene_ranking_map.json", "r") as f:
             self.gene_type_id_map = json.load(f)
         
         # Tag to be manually changed for models to grow with unseen vocabulary
         self.flexible = False # During training do you want to be able to grow vocabularies and add new phenotypes
         self.bypass_inference = False # just masks unknown tokens
-        self.neural_updates = {
-                        "token_values":[], "token_types": [],
-                        "token_value_str":[], "token_type_of_values":[]
-                        }
+        self.neural_updates = { "token_values":[], "token_types": [], "token_value_str":[], "token_type_of_values":[] }
 
 
     def __call__(self, cell) -> tuple[torch.LongTensor, torch.LongTensor]:
@@ -92,10 +89,9 @@ class GeneTokenizer:
         input_tokens = []  # Will have special tokens, phenotypic tokens, and gene expression tokens
         token_type_ids = []
 
-        # [CLS]
+        # [CLS] not used in MLM mode but pipeline works with this offset
         input_tokens.append(self.cls_token)
         token_type_ids.append(0)
-
 
         # e.g. [AGE_TOKEN] [CELL_TOKEN] ... [TISSUE_TOKEN]
         input_tokens.extend([normalise_str(cell.obs[phenotypic_type].item() + ("_" + phenotypic_type if cell.obs[phenotypic_type].item() == "unknown" else ""))
@@ -111,9 +107,7 @@ class GeneTokenizer:
         gene_ensembl_ids  = cell.var.index[gene_ids]
         gene_ids = np.array([self.gene_type_id_map.setdefault(ensembl_id, -1) for ensembl_id in gene_ensembl_ids])
         known_genes = gene_ids != -1
-        if (known_genes == False).sum():
-            #warnings.warn(f"Unknown Ensembl Gene IDs: {gene_ensembl_ids[~known_genes]}") Warning commented bc theres actually a lot
-            gene_ids, bin_ids = gene_ids[known_genes], bin_ids[known_genes] # Remove unknown Ensembl IDs
+        if (known_genes == False).sum(): gene_ids, bin_ids = gene_ids[known_genes], bin_ids[known_genes] # Remove unknown Ensembl IDs
         o = np.argsort(gene_ids) # Sort genes so HVG are first
         gene_ids, bin_ids = gene_ids[o], bin_ids[o]
 
@@ -126,14 +120,14 @@ class GeneTokenizer:
 
         assert len(input_tokens) == len(token_type_ids)
 
-        if len(input_tokens) > self.config.max_length: # Truncating to upperbound computational complexity of transformer O(S^2)
+        # Truncating to upperbound computational complexity of transformer O(S^2)
+        if len(input_tokens) > self.config.max_length:
             input_tokens = input_tokens[:self.config.max_length]
             token_type_ids = token_type_ids[:self.config.max_length]
 
         invalid_tokens = self._check_valid_tokens(input_tokens)
-        labels = input_tokens[:]
         if invalid_tokens:
-            if self.flexible: # Grow network for out of vocabulary tokens 
+            if self.flexible: # Grow vocabulary for new tokens
                 # get the phenotype category they are a part of
                 invalid_token_type_ids = [token_type_ids[input_tokens.index(invalid_token)] for invalid_token in invalid_tokens]
                 self.add_token_values(invalid_tokens, invalid_token_type_ids)
@@ -143,9 +137,8 @@ class GeneTokenizer:
             else:
                 raise ValueError(f"Out of vocabulary tokens: {invalid_tokens}")
 
-        return (torch.LongTensor(self.convert_tokens_to_ids(input_tokens)),
-                 torch.LongTensor(token_type_ids),
-                   labels)
+        labels = input_tokens[:]
+        return (torch.LongTensor(self.convert_tokens_to_ids(input_tokens)), torch.LongTensor(token_type_ids), labels)
     
     def _bin_genes(self, sparse_expr_arr: scipy.sparse.csr_matrix, sparse=True) -> tuple:
         """
@@ -180,9 +173,7 @@ class GeneTokenizer:
         Checks if all tokens are valid (i.e. in the vocabulary).
         Returns a tuple of (is_valid, invalid_tokens).
         """
-        if isinstance(tokens, str):
-            tokens = [tokens]
-
+        if isinstance(tokens, str): tokens = [tokens]
         invalid_tokens = [token for token in tokens if token not in self.token_to_id_map]
         return invalid_tokens
 
@@ -221,8 +212,6 @@ class GeneTokenizer:
     @property
     def type_vocab_size(self) -> int:
         """ Number of unique `token_type_ids` """
-        # update if new genes got added
-        # LL: new genes are ranked last, we don't know their HVG rank, so it will be low priority, we can include with the first bin value threshold
         return self.gene_token_type_offset + self.config.num_top_genes
     
     @property
@@ -235,7 +224,6 @@ class GeneTokenizer:
         self.phenotypic_types.extend(non_duplicate_phenotypes)
 
     def add_token_values(self, new_tokens_values=[], token_type_ids=[]): #token type ids of the new token values 
-        #LL: probably need to refactor whole code with better variable names
         """
         When you add token values - you need to add it to
         1. self.flattened_tokens
@@ -268,11 +256,9 @@ class GeneTokenizer:
             self.flattened_tokens.append(token_str)
             self.phenotypic_tokens_map.setdefault(self.phenotypic_types[token_type-1], []).append(token_str)    
 
-    def sync(self, updates_memory, num): # num = 1082 essentially
+    def sync(self, updates_memory, num): 
         self.flattened_tokens = self.flattened_tokens[:num]
-        for token_type, token_id, token_str in zip(updates_memory['token_type_of_values'],
-                                        updates_memory['token_values'],
-                                        updates_memory['token_value_str']):
+        for token_id, token_str in zip(updates_memory['token_values'], updates_memory['token_value_str']):
             self.token_to_id_map[token_str] = token_id
             self.flattened_tokens.append(token_str)
 

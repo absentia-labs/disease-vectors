@@ -211,8 +211,13 @@ class AttributionAnalysis():
         """
 
         variables = {"diseaseId": disease_ontology_term_id, "size": top}
-        response = requests.post(url, json={"query": query_assoc, "variables": variables}).json()['data']['disease']
-
+        resp = requests.post(url, json={"query": query_assoc, "variables": variables})
+        try:
+            response_json = resp.json()
+            response = response_json.get('data', {}).get('disease')
+        except ValueError:
+            return {}
+        
         if response is None:
             query_search = """
                 query search($term: String!) {
@@ -221,7 +226,12 @@ class AttributionAnalysis():
                     }
                 }
             """
-            search_resp = requests.post(url, json={"query": query_search, "variables": {"term": disease_name}}).json()
+            #search_resp = requests.post(url, json={"query": query_search, "variables": {"term": disease_name}}).json()
+            resp = requests.post(url, json={"query": query_search, "variables": {"term": disease_name}})
+            try:
+                search_resp = resp.json()
+            except ValueError:
+                return {}
             hits = search_resp.get('data', {}).get('search', {}).get('hits', [])
             if hits:
                 new_id = hits[0]['id']

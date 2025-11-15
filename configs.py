@@ -23,8 +23,8 @@ class BaseConfig:
     sparse:bool
     classification_token:bool
     seed:int
-    monitor_collapse:bool
-    compound_loss:bool
+    #monitor_collapse:bool
+    #compound_loss:bool
 
     vocab_path: str
     obs_included_phenotypes: list[str]
@@ -91,7 +91,7 @@ def parse_args(args: list[str] = None) -> BaseConfig:
 
     parser.add_argument("--bin_edges", nargs="+", type=float,
                         help="Provided `n` edges, will partition the gene expression values into `n + 1` bins, these edges are shared across all genes.",
-                        default=[0.5, 1, 2, 4, 6, 8])
+                        default=[0.5, 1, 2, 3, 4, 5, 6, 7, 8])
     parser.add_argument("--pretrained_model_path", type=str, help="Path to a pretrained model to initialize from.")
     parser.add_argument("--shard_size", default=10000, type=int, help="The number of observations in each AnnData shard.")
     parser.add_argument("--eval_data_paths", nargs="+", type=str, help="One or more (possibly `braceexpand`-able) paths to validation h5ad file(s).")
@@ -108,15 +108,16 @@ def parse_args(args: list[str] = None) -> BaseConfig:
     parser.add_argument("--output_dir", type=str, required=True)
     parser.add_argument("--per_device_eval_batch_size", type=int, required=True)
     parser.add_argument("--dataloader_num_workers", default=4, type=int)
-
-    # Classifcation Modifications
-    parser.add_argument("--classification_token", action='store_true', help="Self Supervised Classification on a CLS Token: unified genome-phenome manifold")
+    
     parser.add_argument("--sparse", action="store_true", help="drop 0 expression genes or always have top max length highly variable genes in order")
     parser.add_argument("--seed", type=int, help="seed to set all random generators to", default=42)
 
+    # Classifcation
+    parser.add_argument("--classification_token", action='store_true', help="Self Supervised Classification on a CLS Token: unified genome-phenome manifold")
+
     # Neural Collapse Parameters
-    parser.add_argument("--monitor_collapse", action="store_true")
-    parser.add_argument("--compound_loss", action="store_true")
+    #parser.add_argument("--monitor_collapse", action="store_true")
+    #parser.add_argument("--compound_loss", action="store_true")
 
     mlm_subparser.add_argument("--train_data_paths", nargs="+", type=str, help="One or more (possible `braceexpand`-able) paths to training h5ad file(s).")
     mlm_subparser.add_argument("--num_train_epochs", type=int, required=True)

@@ -33,7 +33,7 @@ if __name__ == "__main__":
     
 
     os.environ.update({  # https://docs.wandb.ai/guides/track/environment-variables
-        "WANDB_PROJECT": "Polygene",
+        "WANDB_PROJECT": "Disease Vector",
         "WANDB_LOG_MODEL": "false",
     })
 
@@ -54,33 +54,25 @@ if __name__ == "__main__":
         model_config.vocab_size = tokenizer.vocab_size # vocab_size and type_vocab_size determine model embeddings row length
         model_config.type_vocab_size = tokenizer.type_vocab_size
         model_config.pad_token_id = tokenizer.convert_tokens_to_ids(tokenizer.pad_token)
-        if config.classification_token: 
-            model_config.obs_included_phenotypes = tokenizer.phenotypic_types
-            model_config.phenotypic_tokens_map = tokenizer.phenotypic_tokens_map
-            model_config.n_bins = tokenizer.num_bins + 1
-        model_config.classification_token = config.classification_token
         model_kwargs = {"attn_implementation": "flash_attention_2"} if config.use_flash_attn else dict()
-        model = Polygene._from_config(model_config, **model_kwargs)
+        model = Polygene._from_config(model_config, **model_kwargs) # torch_dtype=torch.bfloat16
+        # need to investigate the torch.bfloat16 cause its has serious under/overflow.
     elif "checkpoint" in config.pretrained_model_path:
         with open(config.pretrained_model_path + "../tokenizer.pkl", "rb") as f:
             tokenizer = pickle.load(f)
-        tokenizer.flexible=True
+        tokenizer.flexible = True
         tokenizer.neural_updates = {"token_values":[], "token_types": [], "token_value_str":[], "token_type_of_values":[]}
         tokenizer.add_phenotype(config.obs_included_phenotypes)
-        model = Polygene.from_pretrained(config.pretrained_model_path, attn_implementation="flash_attention_2")
+        model = Polygene.from_pretrained(config.pretrained_model_path,  attn_implementation="flash_attention_2") #torch_dtype=torch.bfloat16
 
     data_collator = DataCollatorForPhenotypicMLM(
         tokenizer=tokenizer,
         phenotype_mask_prob=config.phenotype_mask_prob,
         genotype_mask_prob=config.gene_mask_prob,
         )
-    process_train_paths = np.random.permutation(process_train_paths).tolist() # not true shuffling but minimizes successive shard variance
+    process_train_paths = np.random.permutation(process_train_paths).tolist()
     train_dataset = IterableAnnDataset(process_train_paths, config, tokenizer)
-
     eval_dataset = IterableAnnDataset(config.eval_data_paths, config, tokenizer)
-    #eval_metric = metrics_wrapper(model, tokenizer)
-
-    # TODO: shuffle train, add shard_sizes arg, diff shard_size for eval
 
     model_total_params = sum(p.numel() for p in model.parameters())
     print(f"Total number of parameters: {model_total_params}")
@@ -117,11 +109,14 @@ if __name__ == "__main__":
         dataloader_pin_memory=True,
         dataloader_persistent_workers=True,
         
-        evaluation_strategy="steps",
+        eval_strategy="steps",
         eval_steps=config.eval_steps,
         metric_for_best_model=config.best_metric,   
         eval_delay=0,
         include_inputs_for_metrics=True,
+        
+        #bf16=True,
+        #fp16=False,
     )
 
     trainer = ShardedTrainer(
@@ -130,10 +125,6 @@ if __name__ == "__main__":
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
         data_collator=data_collator,
-        #compute_metrics=eval_metric,
-        #preprocess_logits_for_metrics=preprocess_logits_argmax,
-        compound_loss = config.compound_loss,
-        monitor_collapse = config.monitor_collapse,
         tokenizer=tokenizer,
     )
 

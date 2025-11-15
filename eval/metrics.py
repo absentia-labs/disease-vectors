@@ -1,25 +1,20 @@
 import numpy as np
 import pandas as pd
 import torch
-from sklearn.metrics import accuracy_score, precision_score, recall_score, confusion_matrix
-import transformers
+import torch.nn.functional as F
 from polygene.data_utils.tokenization import GeneTokenizer
 from polygene.model.model import Polygene
+from typing import Callable
+from anndata import AnnData
 
+import transformers
+from transformers.modeling_outputs import SequenceClassifierOutput
+from polygene.data_utils.tokenization import GeneTokenizer
 
 def set_seed(seed):
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
     transformers.set_seed(seed)
-
-from typing import Callable
-
-import torch
-import torch.nn.functional as F
-from anndata import AnnData
-from transformers.modeling_outputs import SequenceClassifierOutput
-from polygene.data_utils.tokenization import GeneTokenizer
-
 
 def prepare_cell(cell: AnnData, tokenizer: GeneTokenizer, ) -> dict[str, torch.Tensor]:
     """
@@ -39,7 +34,6 @@ def prepare_cell(cell: AnnData, tokenizer: GeneTokenizer, ) -> dict[str, torch.T
         "str_labels": labels,
     }
     return cell_data
-
 
 def test_batch(prepared_cells: dict[str, torch.Tensor], model: Polygene,
               data_collator: Callable) -> SequenceClassifierOutput:

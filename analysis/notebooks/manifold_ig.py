@@ -220,7 +220,7 @@ k_discrete = 10
 n_geodesics = 50
 n_timepoints = 50
 
-for disease in [f.split('_')[0] for f in os.listdir(EMBEDDINGS_DIR) if "embedding" in f]:
+for disease in [f.split('_')[0] for f in os.listdir(EMBEDDINGS_DIR) if "_0_embedding" in f]:
     #saved_embeddings = pd.read_pickle(EMBEDDINGS_DIR + disease + '_embeddings.pkl')
     #saved_cells = sc.read_h5ad(EMBEDDINGS_DIR + disease + "_cells.h5ad")
     saved_embeddings = pd.read_pickle(EMBEDDINGS_DIR + disease + '_0_embeddings.pkl')

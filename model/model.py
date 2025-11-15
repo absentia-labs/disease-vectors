@@ -37,9 +37,6 @@ class PositionlessEmbeddings(nn.Module):
 
         self.token_value_embeddings = nn.Embedding(config.vocab_size, config.hidden_size, padding_idx=config.pad_token_id)
         self.token_type_embeddings = nn.Embedding(config.type_vocab_size, config.hidden_size)
-
-        # self.LayerNorm is not snake-cased to stick with TensorFlow model variable name and be able to load
-        # any TensorFlow checkpoint file
         self.LayerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
@@ -58,74 +55,28 @@ class PositionlessEmbeddings(nn.Module):
         embeddings = self.LayerNorm(embeddings)
         embeddings = self.dropout(embeddings)
         return embeddings
-        
-
-class  MultiPredictionHead(nn.Module):
-    def __init__(self, config, included_phenotypes, phenotypic_token_map, n_bins, loss):
-        super().__init__()
-        self.loss = loss
-        self.n_bins = n_bins
-        self.included_phenotypes = included_phenotypes
-        self.phenotypic_token_map = phenotypic_token_map
-        self.obs_prediction_heads = nn.ModuleList([nn.Linear(config.dim, len(phenotypic_token_map[phenotype])) for phenotype in included_phenotypes])
-
-        self.genotype_prediction_head =  nn.Linear(config.dim, n_bins)
-        self.phenotype_offset_in_vocab = np.cumsum([4] + [len(phenotypic_token_map[phenotype]) for phenotype in included_phenotypes])
-
-    def forward(self, x, y=None):
-        # x (B, S, E) and y (B, S,)
-        classification_token, genotype_tokens = x[:, 0, :], x[:, 1+len(self.included_phenotypes):, :]
-        obs_y_pred = [head(classification_token) for head in self.obs_prediction_heads] # (P, B, P_i)
-        genotype_y_pred = self.genotype_prediction_head(genotype_tokens) # (B, G, BINS)
-        
-        total_loss = None
-        if y is not None:
-            phenotype_loss = sum([self.loss(obs_y_pred[idx], (y[:, 1+idx] - self.phenotype_offset_in_vocab[idx]).clamp(min=-100)) for idx in range(len(self.included_phenotypes))])
-            genotype_loss = self.loss(genotype_y_pred.view(-1, self.n_bins), (y[:, 1+len(self.included_phenotypes):] - self.phenotype_offset_in_vocab[-1]).clamp(min=-100).view(-1))
-            total_loss = 0.5 * phenotype_loss/len(self.included_phenotypes) + 0.5 * genotype_loss
-        
-        reconstruct_x = x.new_zeros(x.shape[0], x.shape[1], self.phenotype_offset_in_vocab[-1] + self.n_bins)
-        reconstruct_x[:, 1+len(self.included_phenotypes):, -self.n_bins:] = genotype_y_pred
-        for idx, phenotype_pred in enumerate(obs_y_pred):
-            reconstruct_x[:, 1+idx, self.phenotype_offset_in_vocab[idx]:self.phenotype_offset_in_vocab[idx+1]] = phenotype_pred
-        return reconstruct_x, total_loss
-
+    
 
 class Polygene(transformers.DistilBertPreTrainedModel):
     """
-    Equivalent to `DistilBertModel` but with `PositionlessEmbeddings`
+    Similar to `DistilBertModel` but with `PositionlessEmbeddings`
     and allowing `token_type_ids` argument in `forward()`.
     """
     def __init__(self, config: transformers.PretrainedConfig):
-        """
-        Only modification is using `PositionlessEmbeddings`.
-        """
         super().__init__(config)
-
-        self.mlm_loss_fct = nn.CrossEntropyLoss(label_smoothing=0.25)
-
+        self.mlm_loss_fct = nn.CrossEntropyLoss(label_smoothing=0.5)
 
         if not hasattr(config, "updates_memory") or config.updates_memory is None: # Load in the checkpoint version
-            config.updates_memory = {
-                "token_values": [],
-                "token_value_str": [],
-                "token_type_of_values": [],
-            }
+            config.updates_memory = { "token_values": [], "token_value_str": [], "token_type_of_values": [],}
         
         self.embeddings = PositionlessEmbeddings(config)  # changed to `PositionlessEmbeddings`
-        self.transformer = transformers.models.distilbert.modeling_distilbert.Transformer(config)  # encoder
+        self.transformer = transformers.models.distilbert.modeling_distilbert.Transformer(config) # Encoder
         self._use_flash_attention_2 = config._attn_implementation == "flash_attention_2"
-
-        if not self.config.classification_token:
-            if not hasattr(self.config, "head_hidden_layers"): # error handling for different versions of the class
-                self.config.head_hidden_layers = 1
-            head_layers = [layer for _ in range(self.config.head_hidden_layers) for layer in (nn.Linear(config.dim, config.dim), get_activation(config.activation))]
-            self.prediction_head = nn.Sequential(*(head_layers + [
-                nn.LayerNorm(config.dim, eps=1e-12),
-                nn.Linear(config.dim, config.vocab_size),
-            ]))
-        else:
-            self.prediction_head = MultiPredictionHead(config, config.obs_included_phenotypes, config.phenotypic_tokens_map, config.n_bins, self.mlm_loss_fct)
+        
+        head_layers = [layer for _ in range(self.config.head_hidden_layers)
+                        for layer in (nn.Linear(config.dim, config.dim), get_activation(config.activation))]
+        self.prediction_head = nn.Sequential(*(head_layers + [
+             nn.LayerNorm(config.dim, eps=1e-12), nn.Linear(config.dim, config.vocab_size), ]))
 
         # Initialize weights and apply final processing
         self.post_init()
@@ -150,16 +101,12 @@ class Polygene(transformers.DistilBertPreTrainedModel):
             config.vocab_size]` (see `input_ids` docstring) Tokens with indices set to `-100` are ignored (masked), the
             loss is only computed for the tokens with labels in `[0, ..., config.vocab_size]`.
         """
-
-        # still a little voodoo
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states)
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
         head_mask = self.get_head_mask(head_mask, self.config.num_hidden_layers) # Prepare head mask if needed
 
-        if self.training and any(neural_updates[n] for n in neural_updates):
-            self.update_network(neural_updates, input_ids, tokenizer)
-
+        if self.training and any(neural_updates[n] for n in neural_updates): self.update_network(neural_updates, input_ids, tokenizer)
         if not self.training and tokenizer is not None and tokenizer.vocab_size < self.config.vocab_size:
             tokenizer.sync(self.config.updates_memory, num=self.config.vocab_size - len(self.config.updates_memory['token_value_str']))
 
@@ -168,7 +115,7 @@ class Polygene(transformers.DistilBertPreTrainedModel):
             token_type_ids=token_type_ids, 
             inputs_embeds=inputs_embeds
         )  if inputs_embeds is None else inputs_embeds
-
+         
         distilbert_output = self.transformer( # encoder-only transformer, don't panic
             x=embeddings,
             attn_mask=attention_mask,
@@ -177,13 +124,10 @@ class Polygene(transformers.DistilBertPreTrainedModel):
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
         )
-        hidden_state_embeddings = distilbert_output[0] #/ (torch.linalg.norm(distilbert_output[0],dim=-1, keepdim=True) + 1e-12) # (B, S, D)
+        hidden_state_embeddings = distilbert_output[0]
 
-        if not self.config.classification_token:
-            prediction_logits = self.prediction_head(hidden_state_embeddings) # (B, S, V), V for vocabulary size
-            mlm_loss = self.mlm_loss_fct(prediction_logits.view(-1, prediction_logits.size(-1)), labels.view(-1)) if labels is not None else None
-        else:
-            prediction_logits, mlm_loss = self.prediction_head(hidden_state_embeddings, labels)
+        prediction_logits = self.prediction_head(hidden_state_embeddings) # (B, S, V), V for vocabulary size
+        mlm_loss = self.mlm_loss_fct(prediction_logits.view(-1, prediction_logits.size(-1)), labels.view(-1)) if labels is not None else None
 
         return MaskedLMOutput(
             loss=mlm_loss,
@@ -194,7 +138,7 @@ class Polygene(transformers.DistilBertPreTrainedModel):
     
     def update_network(self, neural_updates: dict, input_ids, tokenizer):
         """
-        Method to update embeddings and prediction head shape, hopefully without breaking the model
+        Method to update embeddings and prediction head shape
 
         neural_updates: dict
         neural_updates = {"token_values":[], "token_types": [],
@@ -227,9 +171,6 @@ class Polygene(transformers.DistilBertPreTrainedModel):
                 new_classifier.bias[:vocab] = classifier.bias
             self.prediction_head[-1] = new_classifier.to(device)
 
-            #if neural_updates['token_values'][0] <= self.config.vocab_size:
-            #    neural_updates['token_values'] = [self.config.vocab_size + i for i in range(len(neural_updates['token_values']))]
-            #    input_ids[input_ids == '']
             self.config.vocab_size += len(neural_updates['token_values'])
             self.config.updates_memory['token_values'].extend(neural_updates['token_values'])
             self.config.updates_memory['token_value_str'].extend(neural_updates['token_value_str'])
@@ -254,6 +195,7 @@ import os
 import pickle
 
 def load_trained_model(directory, checkpoint_n=-1):
+
     with open(directory + "tokenizer.pkl", "rb") as f:
         tokenizer = pickle.load(f)
         
@@ -261,3 +203,34 @@ def load_trained_model(directory, checkpoint_n=-1):
     model.to("cuda:0")
     model.eval()
     return model, tokenizer
+
+
+#class  MultiPredictionHead(nn.Module):
+#    def __init__(self, config, included_phenotypes, phenotypic_token_map, n_bins, loss):
+#        super().__init__()
+#        self.loss = loss
+#        self.n_bins = n_bins
+#        self.included_phenotypes = included_phenotypes
+#        self.phenotypic_token_map = phenotypic_token_map
+#        self.obs_prediction_heads = nn.ModuleList([nn.Linear(config.dim, len(phenotypic_token_map[phenotype])) for phenotype in included_phenotypes])
+#
+#        self.genotype_prediction_head =  nn.Linear(config.dim, n_bins)
+#        self.phenotype_offset_in_vocab = np.cumsum([4] + [len(phenotypic_token_map[phenotype]) for phenotype in included_phenotypes])
+#
+#    def forward(self, x, y=None):
+#        # x (B, S, E) and y (B, S,)
+#        classification_token, genotype_tokens = x[:, 0, :], x[:, 1+len(self.included_phenotypes):, :]
+#        obs_y_pred = [head(classification_token) for head in self.obs_prediction_heads] # (P, B, P_i)
+#        genotype_y_pred = self.genotype_prediction_head(genotype_tokens) # (B, G, BINS)
+#        
+#        total_loss = None
+#        if y is not None:
+#            phenotype_loss = sum([self.loss(obs_y_pred[idx], (y[:, 1+idx] - self.phenotype_offset_in_vocab[idx]).clamp(min=-100)) for idx in range(len(self.included_phenotypes))])
+#            genotype_loss = self.loss(genotype_y_pred.view(-1, self.n_bins), (y[:, 1+len(self.included_phenotypes):] - self.phenotype_offset_in_vocab[-1]).clamp(min=-100).view(-1))
+#            total_loss = 0.5 * phenotype_loss/len(self.included_phenotypes) + 0.5 * genotype_loss
+#        
+#        reconstruct_x = x.new_zeros(x.shape[0], x.shape[1], self.phenotype_offset_in_vocab[-1] + self.n_bins)
+#        reconstruct_x[:, 1+len(self.included_phenotypes):, -self.n_bins:] = genotype_y_pred
+#        for idx, phenotype_pred in enumerate(obs_y_pred):
+#            reconstruct_x[:, 1+idx, self.phenotype_offset_in_vocab[idx]:self.phenotype_offset_in_vocab[idx+1]] = phenotype_pred
+#        return reconstruct_x, total_loss
