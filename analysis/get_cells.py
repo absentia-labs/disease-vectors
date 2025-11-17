@@ -10,7 +10,7 @@ import torch
 from polygene.eval.metrics import prepare_cell
 import gc
 
-TEST_CHUNK_ID = 2502
+TEST_CHUNK_ID = 2504
 DATASET = "/media/rohola/ssd_storage/primary/"
 SAVE_DIR = "/media/lleger/LaCie/mit/disease_vector/"
 age_map = json.load(open('../data_utils/vocab/age_map.json'))

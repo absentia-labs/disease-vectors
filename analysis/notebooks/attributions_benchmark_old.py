@@ -5,7 +5,7 @@ import scanpy as sc
 from polygene.model.model import load_trained_model
 import numpy as np, pandas as pd
 from rapidfuzz import process, fuzz
-from polygene.analysis.attributions import AttributionAnalysis
+from polygene.analysis.attributions_old import AttributionAnalysis
 from polygene.analysis.notebooks.get_disease_vectors import compute_disease_vectors
 EMBEDDINGS_DIR = '/media/lleger/LaCie/mit/disease_vector/vector_data/'
 

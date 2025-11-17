@@ -13,7 +13,7 @@ CUDA_DEVICE_ORDER="PCI_BUS_ID" CUDA_VISIBLE_DEVICES=1 accelerate launch --mixed_
 --dataloader_num_workers 8 \
 --output_dir '/media/lleger/LaCie/mit/runs/polygene' \
 --sparse \
---seed 3 \
+--seed 4 \
 --use_flash_attn \
 mlm \
 --gene_mask_prob 0.05 \
@@ -23,7 +23,7 @@ mlm \
 --learning_rate 1e-4 \
 --weight_decay 5e-2 \
 --warmup_ratio 0.05 \
---num_train_epochs 1 \
+--num_train_epochs 3 \
 --eval_steps 100000 \
 --save_steps 100000
 

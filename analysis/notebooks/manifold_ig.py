@@ -7,7 +7,7 @@ from polygene.data_utils.tokenization import normalise_str
 import pandas as pd, numpy as np, matplotlib.pyplot as plt, seaborn as sns
 import torch, torch.nn as nn, scanpy as sc
 import torch.nn.functional as F
-from polygene.analysis.attributions import AttributionAnalysis
+from polygene.analysis.attributions_old import AttributionAnalysis
 log_partition_function = lambda xi: torch.log( torch.sum( torch.exp( xi ) ) )
 
 # the fisher rao metric is the second order taylor approximation of the KL divergence, it is the second derivative of the convex potential for natural parameters xi

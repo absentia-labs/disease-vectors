@@ -4,7 +4,7 @@ from scipy.stats import chi2
 from ripser import ripser
 import sys
 sys.path.append('../../')
-from polygene.analysis.attributions import AttributionAnalysis
+from polygene.analysis.attributions_old import AttributionAnalysis
 from tqdm import tqdm
 import umap
 class EndotypeAnalysis():
