@@ -55,7 +55,7 @@ def collate_fn_wrapper(tokenizer:GeneTokenizer):
 
     return collate_fn
 
-
+import numpy as np
 def torch_mask_tokens(batch, tokenizer: GeneTokenizer, phenotype_mask_prob, genotype_mask_prob, rng=None):
     """
     Modified version of `DataCollatorForLanguageModeling.torch_mask_tokens`
@@ -68,11 +68,12 @@ def torch_mask_tokens(batch, tokenizer: GeneTokenizer, phenotype_mask_prob, geno
         For each sequence in a batch, we randomly swap expressed genes with not expressed ones with (1 / 2*(tokenizer.num_bins + 1)) probability.
     """
 
-    #batch["labels"] = batch["input_ids"].clone() # reconstruct input mode
     batch["labels"] = torch.full_like(batch["input_ids"], -100, dtype=torch.long)
+    batch["labels"] = batch["input_ids"].clone() # reconstruct input mode
     phenotypic_tokens_mask = tokenizer.get_phenotypic_tokens_mask(batch["token_type_ids"]) & (batch["input_ids"] != tokenizer.convert_tokens_to_ids(tokenizer.mask_token))
     gene_tokens_mask = tokenizer.get_gene_tokens_mask(batch["token_type_ids"])
 
+    phenotype_mask_prob, genotype_mask_prob = np.random.uniform(0, 1, size=2)
     # Phenotype MLM
     if phenotype_mask_prob > 0:
         phenotype_prob_matrix = torch.zeros(batch["labels"].shape).masked_fill(phenotypic_tokens_mask, value=phenotype_mask_prob)
@@ -87,6 +88,7 @@ def torch_mask_tokens(batch, tokenizer: GeneTokenizer, phenotype_mask_prob, geno
         batch["labels"][gene_masked_indices] = batch["input_ids"][gene_masked_indices]
         batch["input_ids"][gene_masked_indices] = tokenizer.convert_tokens_to_ids(tokenizer.mask_token)
 
+    
         # Replacing 1 / (num_bins + 1) with a random not expressed token, so that bin_0 is a label sometimes
         #if tokenizer.config.sparse:
         #    rand_swap_prob = 1 / (2*(tokenizer.num_bins + 1))

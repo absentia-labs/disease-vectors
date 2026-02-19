@@ -11,19 +11,23 @@ CUDA_DEVICE_ORDER="PCI_BUS_ID" CUDA_VISIBLE_DEVICES=1 accelerate launch --mixed_
 --obs_included_phenotypes disease tissue cell_type sex development_stage assay \
 --per_device_eval_batch_size 32 \
 --dataloader_num_workers 8 \
---output_dir '/media/lleger/LaCie/mit/runs/polygene' \
+--output_dir '/media/lleger/LaCie/mit/runs/polygene_unit_sphere' \
 --sparse \
---seed 4 \
+--seed 3 \
+--tied \
+--unit_sphere_constraint \
+--n_layers 6 \
+--dim 240 \
 --use_flash_attn \
 mlm \
---gene_mask_prob 0.05 \
+--gene_mask_prob 0.5 \
 --phenotype_mask_prob 0.75 \
 --train_data_paths '/media/rohola/ssd_storage/primary/cxg_chunk{0..2502}.h5ad' \
 --per_device_train_batch_size 32 \
 --learning_rate 1e-4 \
 --weight_decay 5e-2 \
 --warmup_ratio 0.05 \
---num_train_epochs 3 \
+--num_train_epochs 2 \
 --eval_steps 100000 \
 --save_steps 100000
 

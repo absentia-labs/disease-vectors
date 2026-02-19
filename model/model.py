@@ -64,8 +64,14 @@ class Polygene(transformers.DistilBertPreTrainedModel):
     """
     def __init__(self, config: transformers.PretrainedConfig):
         super().__init__(config)
-        self.mlm_loss_fct = nn.CrossEntropyLoss(label_smoothing=0.5)
+        self.mlm_loss_fct = nn.CrossEntropyLoss(label_smoothing=0)
 
+        if not hasattr(config, "tied"):
+            self.config.tied = False
+        if not hasattr(config, "head_hidden_layers"):
+            self.config.head_hidden_layers = 1
+        if not hasattr(config, "unit_sphere_constraint"):
+            self.config.unit_sphere_constraint = False
         if not hasattr(config, "updates_memory") or config.updates_memory is None: # Load in the checkpoint version
             config.updates_memory = { "token_values": [], "token_value_str": [], "token_type_of_values": [],}
         
@@ -76,7 +82,13 @@ class Polygene(transformers.DistilBertPreTrainedModel):
         head_layers = [layer for _ in range(self.config.head_hidden_layers)
                         for layer in (nn.Linear(config.dim, config.dim), get_activation(config.activation))]
         self.prediction_head = nn.Sequential(*(head_layers + [
-             nn.LayerNorm(config.dim, eps=1e-12), nn.Linear(config.dim, config.vocab_size), ]))
+             nn.LayerNorm(config.dim, eps=1e-12) if not self.config.unit_sphere_constraint else nn.Identity(), 
+             nn.Linear(config.dim, config.vocab_size, bias=False if self.config.tied else True), ]))
+        
+        # Tied weights in the prediction head and embedding layers
+        self.prediction_head[-1].weight = self.embeddings.token_value_embeddings.weight
+
+        if self.config.unit_sphere_constraint: self.temperature = nn.Parameter(torch.tensor(0.07))
 
         # Initialize weights and apply final processing
         self.post_init()
@@ -116,25 +128,51 @@ class Polygene(transformers.DistilBertPreTrainedModel):
             inputs_embeds=inputs_embeds
         )  if inputs_embeds is None else inputs_embeds
          
-        distilbert_output = self.transformer( # encoder-only transformer, don't panic
+        distilbert_output = self.transformer(
             x=embeddings,
             attn_mask=attention_mask,
             head_mask=head_mask,
             output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
+            output_hidden_states=True,
             return_dict=return_dict,
         )
         hidden_state_embeddings = distilbert_output[0]
 
-        prediction_logits = self.prediction_head(hidden_state_embeddings) # (B, S, V), V for vocabulary size
-        mlm_loss = self.mlm_loss_fct(prediction_logits.view(-1, prediction_logits.size(-1)), labels.view(-1)) if labels is not None else None
+        if self.config.unit_sphere_constraint:
+            hidden_state_embeddings = hidden_state_embeddings / torch.norm(hidden_state_embeddings, dim=-1, keepdim=True)
 
+        prediction_logits = self.prediction_head(hidden_state_embeddings) # (B, S, V), V for vocabulary size
+
+        if self.config.unit_sphere_constraint:
+            prediction_logits = prediction_logits / self.temperature
+
+        mlm_loss = self.mlm_loss_fct(prediction_logits.view(-1, prediction_logits.size(-1)), labels.view(-1)) if labels is not None else None
+        
         return MaskedLMOutput(
             loss=mlm_loss,
             logits=prediction_logits,
             hidden_states=hidden_state_embeddings,
-            attentions=distilbert_output.attentions,
+            #hidden_states=distilbert_output,
+            #attentions=distilbert_output.attentions,  
         )
+    
+        # With a transformer of contextualize PG, we can embed diseases onto a manifold of actractor bassins. introduce some modifications.
+
+        # by doing so maximizing the likelihood becomes equivalent to maximizing the angular alignment or cosine similarity
+        # between latent representations a prediction head or vocabulary martrix weights
+        # we embed cell states on a hypersphere, assign coordinates that live on the surface of a hypersphere. 
+        # what this means is diseases that depart from a healthy state share integral paths, they share decay similarity in their gradient flow curves
+        
+        # with tied embeddding and prediction weight matrices and embeddings normalised to the unit sphere or the n-unit. S^n
+
+        # We acheive this by training MLM and enhancing the interpretability of by constraining embeddings and a embedding matrix to the n-dimensional unit sphere 
+        # what we notice is a semantic organsiation of disease by tissues and cell type and an emergent* analogical structure, which is induced by minimizing KL.
+
+        # there was this last conceptualization missing, Elazer's question persisted: What are you trying to say about disease. 
+        # this lead to think about the shared pluripotence of healthy cells and the unviable endotyping currently found in disease state modeling that fails to account
+        # for its infinite stratification and fractal dimensionality/complexity
+
+        # once we do, we see there are lots of emergent properties/structure induced by our uncertainty minimization
     
     def update_network(self, neural_updates: dict, input_ids, tokenizer):
         """
@@ -190,7 +228,16 @@ class Polygene(transformers.DistilBertPreTrainedModel):
 
             self.config.type_vocab_size += n_types
 
+    def save_pretrained(self, save_directory, **kwargs):
+        """
+        Override to handle tied weights before saving.
+        """
+        original_weight = self.prediction_head[-1].weight
+        self.prediction_head[-1].weight = nn.Parameter(original_weight.clone())
 
+        super().save_pretrained(save_directory, **kwargs)
+
+        self.prediction_head[-1].weight = self.embeddings.token_value_embeddings.weight
 import os
 import pickle
 
@@ -198,8 +245,10 @@ def load_trained_model(directory, checkpoint_n=-1):
 
     with open(directory + "tokenizer.pkl", "rb") as f:
         tokenizer = pickle.load(f)
-        
-    model = Polygene.from_pretrained(directory + sorted([x for x in os.listdir(directory) if x.startswith('checkpoint-')])[checkpoint_n], ignore_mismatched_sizes=True)#, attn_implementation="flash_attention_2") # get last checkpoint of run
+    
+    checkpoint_numbers = sorted([x for x in os.listdir(directory) if x.startswith('checkpoint-')], key=lambda x: int(x.split('-')[1]), reverse=False)
+    print('loading', checkpoint_numbers[checkpoint_n])
+    model = Polygene.from_pretrained(directory + checkpoint_numbers[checkpoint_n], ignore_mismatched_sizes=True)
     model.to("cuda:0")
     model.eval()
     return model, tokenizer

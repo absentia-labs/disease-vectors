@@ -187,3 +187,6 @@ scripts/*
 *-U.sh
 *.csv
 *.svg
+*.npy
+*.png
+*.pkl

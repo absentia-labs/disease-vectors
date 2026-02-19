@@ -1,17 +1,13 @@
 """
-Supports training (either MLM or classification). Inference not implemented yet.
-Training works across multiple GPUs on a single machine.
+train or resume training of a BERT-style masked language model
 """
 import os
-import json
 import pickle
 
-import accelerate
-import torch
-import numpy as np
-import torch.nn as nn
-import transformers
 import wandb
+import accelerate
+import numpy as np
+import transformers
 
 from polygene.configs import parse_args, TrainConfig
 from polygene.data_utils import (
@@ -19,7 +15,7 @@ from polygene.data_utils import (
 )
 from polygene.eval.metrics import set_seed
 from polygene.model.model import Polygene
-from polygene.data_utils.sharded_trainer import ShardedTrainer
+from polygene.data_utils.sharded_trainer import ShardedTrainer, UnitSphereConstraint
 
 
 if __name__ == "__main__":
@@ -31,16 +27,11 @@ if __name__ == "__main__":
     config: TrainConfig = config
     np.random.shuffle(config.train_data_paths)
     
-
-    os.environ.update({  # https://docs.wandb.ai/guides/track/environment-variables
-        "WANDB_PROJECT": "Disease Vector",
-        "WANDB_LOG_MODEL": "false",
-    })
-
-    working_dir = config.output_dir
+    os.environ.update({ "WANDB_PROJECT": "Disease Geometry", "WANDB_LOG_MODEL": "false", })
+    print(config.output_dir)
+    working_dir = config.output_dir 
     os.makedirs(working_dir, exist_ok=True) 
-    with open(os.path.join(working_dir, "tokenizer.pkl"), "wb") as f: # Save tokenizer so you can load check points while training.
-        pickle.dump(tokenizer, f)
+    with open(os.path.join(working_dir, "tokenizer.pkl"), "wb") as f: pickle.dump(tokenizer, f)
 
     # Divide `config.train_data_paths` across the processes. Processes is different from workers handled by accelerate and for multi-GPU
     assert len(config.train_data_paths) % distributed_state.num_processes == 0, "num train paths is multiple of processes"
@@ -51,12 +42,23 @@ if __name__ == "__main__":
     # Load the configuration for a model
     if config.pretrained_model_path.lower().endswith('json'):
         model_config = transformers.AutoConfig.from_pretrained(config.pretrained_model_path)
-        model_config.vocab_size = tokenizer.vocab_size # vocab_size and type_vocab_size determine model embeddings row length
-        model_config.type_vocab_size = tokenizer.type_vocab_size
+        # vocab_size and type_vocab_size determine model embeddings row length
+        model_config.vocab_size = tokenizer.vocab_size; model_config.type_vocab_size = tokenizer.type_vocab_size
         model_config.pad_token_id = tokenizer.convert_tokens_to_ids(tokenizer.pad_token)
+        model_config.n_layers = config.n_layers
+        model_config.n_heads = 6
+        model_config.dim = config.dim
+        model_config.hidden_dim = 2*config.dim
+        model_config.tied = config.tied
+        model_config.unit_sphere_constraint = config.unit_sphere_constraint
         model_kwargs = {"attn_implementation": "flash_attention_2"} if config.use_flash_attn else dict()
-        model = Polygene._from_config(model_config, **model_kwargs) # torch_dtype=torch.bfloat16
-        # need to investigate the torch.bfloat16 cause its has serious under/overflow.
+        model = Polygene._from_config(model_config, **model_kwargs)
+
+        def count_model_parameters(model):
+            print(f"{sum(parameter.numel() for name, parameter in model.named_parameters() if not 'embedding' in name) / 1_000_000:.2f}M")
+            print(f"{sum(parameter.numel() for name, parameter in model.named_parameters()) / 1_000_000:.2f}M")
+        count_model_parameters(model)
+
     elif "checkpoint" in config.pretrained_model_path:
         with open(config.pretrained_model_path + "../tokenizer.pkl", "rb") as f:
             tokenizer = pickle.load(f)
@@ -73,9 +75,6 @@ if __name__ == "__main__":
     process_train_paths = np.random.permutation(process_train_paths).tolist()
     train_dataset = IterableAnnDataset(process_train_paths, config, tokenizer)
     eval_dataset = IterableAnnDataset(config.eval_data_paths, config, tokenizer)
-
-    model_total_params = sum(p.numel() for p in model.parameters())
-    print(f"Total number of parameters: {model_total_params}")
 
     training_args = transformers.TrainingArguments(
         output_dir=working_dir,
@@ -114,9 +113,6 @@ if __name__ == "__main__":
         metric_for_best_model=config.best_metric,   
         eval_delay=0,
         include_inputs_for_metrics=True,
-        
-        #bf16=True,
-        #fp16=False,
     )
 
     trainer = ShardedTrainer(
@@ -126,13 +122,14 @@ if __name__ == "__main__":
         eval_dataset=eval_dataset,
         data_collator=data_collator,
         tokenizer=tokenizer,
+        callbacks=[UnitSphereConstraint()] if config.unit_sphere_constraint else None 
     )
 
     # Train the model
     trainer.train()
 
     tokenizer.update_from_model_memory(model.config.updates_memory)
-    with open(os.path.join(working_dir, "tokenizer.pkl"), "wb") as f: # Save last version of tokenizer
+    with open(os.path.join(working_dir, "tokenizer.pkl"), "wb") as f: # save last version of tokenizer in case vocab grows
         pickle.dump(tokenizer, f)
 
     # Evaluate the model
@@ -140,4 +137,3 @@ if __name__ == "__main__":
     trainer.evaluate()
 
     wandb.finish()
-    os._exit(0)

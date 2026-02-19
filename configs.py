@@ -22,7 +22,6 @@ class BaseConfig:
     custom_mapping:str
     sparse:bool
     classification_token:bool
-    seed:int
     #monitor_collapse:bool
     #compound_loss:bool
 
@@ -35,6 +34,13 @@ class BaseConfig:
     output_dir: str
     per_device_eval_batch_size: int
     dataloader_num_workers: int
+    
+    seed:int
+    n_layers:int
+    dim: int
+
+    tied:bool
+    unit_sphere_constraint:bool
 
     def __post_init__(self):
         """ Postprocessing and basic sanity checks """
@@ -110,7 +116,12 @@ def parse_args(args: list[str] = None) -> BaseConfig:
     parser.add_argument("--dataloader_num_workers", default=4, type=int)
     
     parser.add_argument("--sparse", action="store_true", help="drop 0 expression genes or always have top max length highly variable genes in order")
+    
     parser.add_argument("--seed", type=int, help="seed to set all random generators to", default=42)
+    parser.add_argument("--n_layers", type=int, help="seed to set all random generators to", default=42)
+    parser.add_argument("--dim", type=int, help="seed to set all random generators to", default=42)
+    parser.add_argument("--tied", action="store_true", help="tied embeddings and prediction head")
+    parser.add_argument("--unit_sphere_constraint", action="store_true", help="tied embeddings and prediction head")
 
     # Classifcation
     parser.add_argument("--classification_token", action='store_true', help="Self Supervised Classification on a CLS Token: unified genome-phenome manifold")

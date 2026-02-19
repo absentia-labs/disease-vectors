@@ -10,6 +10,15 @@ from collections import deque, defaultdict
 from polygene.data_utils.tokenization import GeneTokenizer
 from sklearn.metrics import accuracy_score, precision_score, recall_score
 
+from transformers import TrainerCallback
+
+class UnitSphereConstraint(TrainerCallback):
+    def on_step_end(self, args, state, control, model=None, **kwargs):
+        with torch.no_grad():
+            embeddings_matrix = model.prediction_head[-1].weight # (V, d)
+            embeddings_matrix /= torch.norm(embeddings_matrix, dim=-1, keepdim=True)
+        return control
+
 class ShardedTrainer(transformers.Trainer):
     """
     Modified Trainer for our use case of distributed training on multiple GPUs with a sharded IterableDataset.

@@ -31,9 +31,8 @@ def prepare_cell(cell: AnnData, tokenizer: GeneTokenizer, ) -> dict[str, torch.T
         "input_ids": input_ids,
         "token_type_ids": token_type_ids,
         "attention_mask": torch.ones_like(input_ids, dtype=torch.bool),
-        "str_labels": labels,
     }
-    return cell_data
+    return cell_data, labels
 
 def test_batch(prepared_cells: dict[str, torch.Tensor], model: Polygene,
               data_collator: Callable) -> SequenceClassifierOutput:

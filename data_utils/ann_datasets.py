@@ -80,8 +80,29 @@ class IterableAnnDataset(torch.utils.data.IterableDataset):
             raise NotImplementedError
 
         # could iterate on shuffled permutation instead, but remember https://github.com/huggingface/transformers/blob/19e5ed736611227b004c6f55679ce3536db3c28d/src/transformers/trainer_pt_utils.py#L705
+        cells_to_exclude = [
+            ("Lewy body dementia", "astrocyte"),
+            ("glioblastoma", "microglial cell"),
+            ("non-small cell lung carcinoma", "B cell"),
+            ("myocardial infarction", "cardiac endothelial cell"),
+        ]
+        # Can we predict with: vector arithmetic scRNA 
+        # Hallucinating with the model
+        # Vector Arithmetic in embedding space 
+        # Parallel Transport of Vector Arithmetic 
+
+        # Information Geometry part
+        # 
         for cell in adata:
             input_ids, token_type_ids, labels = self.tokenizer(cell)
+
+            disease_index = self.tokenizer.phenotypic_types.index("disease")
+            cell_type_index = self.tokenizer.phenotypic_types.index("cell_type")
+            disease_value = labels[disease_index]
+            cell_type_value = labels[cell_type_index]
+            if (disease_value, cell_type_value) in cells_to_exclude:
+                continue
+            
             cell_data = {
                 "input_ids": input_ids,
                 "token_type_ids": token_type_ids,
